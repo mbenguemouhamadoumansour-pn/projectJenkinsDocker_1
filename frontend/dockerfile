@@ -1,11 +1,32 @@
+# Étape 1 : Construction du build React
 FROM node:18-alpine AS build
+
 WORKDIR /app
+
+# Copier les fichiers de dépendances
 COPY package*.json ./
+
+# Installer les dépendances
 RUN npm install
+
+# Copier le reste du code
 COPY . .
+
+# ✅ Corriger les permissions pour éviter l'erreur "Permission denied"
+RUN chmod -R 755 /app
+RUN chmod +x node_modules/.bin/react-scripts
+
+# Construire l'application React
 RUN npm run build
 
+# Étape 2 : Utiliser Nginx pour servir les fichiers
 FROM nginx:alpine
+
+# Copier le build React vers le dossier HTML de Nginx
 COPY --from=build /app/build /usr/share/nginx/html
+
+# Exposer le port 80
 EXPOSE 80
+
+# Lancer Nginx
 CMD ["nginx", "-g", "daemon off;"]
