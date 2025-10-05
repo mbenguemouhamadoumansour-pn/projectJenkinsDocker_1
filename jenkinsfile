@@ -1,33 +1,29 @@
 pipeline {
     agent any
-
+    
     environment {
-        // Identifiants DockerHub
         DOCKERHUB_USERNAME = 'mouhamadoumbengue'
-        DOCKERHUB_CREDENTIALS = credentials('dockerhub-jenkins')
-
-        // Noms des images Docker
+        DOCKERHUB_CREDENTIALS = credentials('dockerhub-credentials')
         FRONTEND_IMAGE = "${DOCKERHUB_USERNAME}/sama-frontend"
         BACKEND_IMAGE = "${DOCKERHUB_USERNAME}/sama-backend"
-
-        // Numéro du build Jenkins
         BUILD_TAG = "${BUILD_NUMBER}"
+        NOTIFICATION_EMAIL = 'mbenguemouhamadoumansour@gmail.com'
     }
-
+    
     stages {
         stage('Checkout') {
             steps {
-                echo '📦 Récupération du code depuis GitHub...'
+                echo 'Récupération du code depuis GitHub...'
                 checkout scm
             }
         }
-
+        
         stage('Install Dependencies') {
             parallel {
                 stage('Backend Dependencies') {
                     steps {
                         dir('backend') {
-                            echo '⚙️ Installation des dépendances backend...'
+                            echo 'Installation des dépendances backend...'
                             sh 'npm install'
                         }
                     }
@@ -35,20 +31,20 @@ pipeline {
                 stage('Frontend Dependencies') {
                     steps {
                         dir('frontend') {
-                            echo '⚙️ Installation des dépendances frontend...'
+                            echo 'Installation des dépendances frontend...'
                             sh 'npm install'
                         }
                     }
                 }
             }
         }
-
+        
         stage('Run Tests') {
             parallel {
                 stage('Test Backend') {
                     steps {
                         dir('backend') {
-                            echo '🧪 Tests backend...'
+                            echo 'Tests backend...'
                             sh 'npm test || echo "⚠️ Aucun test configuré pour le backend"'
                         }
                     }
@@ -56,20 +52,20 @@ pipeline {
                 stage('Test Frontend') {
                     steps {
                         dir('frontend') {
-                            echo '🧪 Tests frontend...'
+                            echo 'Tests frontend...'
                             sh 'CI=true npm test || echo "⚠️ Aucun test configuré pour le frontend"'
                         }
                     }
                 }
             }
         }
-
+        
         stage('Build Docker Images') {
             parallel {
                 stage('Build Backend Image') {
                     steps {
                         dir('backend') {
-                            echo "🏗️ Construction de l'image backend..."
+                            echo "Construction de l'image backend..."
                             sh "docker build -t ${BACKEND_IMAGE}:${BUILD_TAG} ."
                             sh "docker tag ${BACKEND_IMAGE}:${BUILD_TAG} ${BACKEND_IMAGE}:latest"
                         }
@@ -78,7 +74,7 @@ pipeline {
                 stage('Build Frontend Image') {
                     steps {
                         dir('frontend') {
-                            echo "🏗️ Construction de l'image frontend..."
+                            echo "Construction de l'image frontend..."
                             sh "docker build -t ${FRONTEND_IMAGE}:${BUILD_TAG} ."
                             sh "docker tag ${FRONTEND_IMAGE}:${BUILD_TAG} ${FRONTEND_IMAGE}:latest"
                         }
@@ -86,62 +82,191 @@ pipeline {
                 }
             }
         }
-
+        
         stage('Push to DockerHub') {
             steps {
-                echo '🚀 Connexion à DockerHub...'
+                echo 'Connexion à DockerHub...'
                 sh 'echo $DOCKERHUB_CREDENTIALS_PSW | docker login -u $DOCKERHUB_CREDENTIALS_USR --password-stdin'
-
-                echo '📤 Push des images vers DockerHub...'
+                
+                echo 'Push des images vers DockerHub...'
                 sh "docker push ${BACKEND_IMAGE}:${BUILD_TAG}"
                 sh "docker push ${BACKEND_IMAGE}:latest"
                 sh "docker push ${FRONTEND_IMAGE}:${BUILD_TAG}"
                 sh "docker push ${FRONTEND_IMAGE}:latest"
-
+                
                 echo '✅ Images publiées sur DockerHub avec succès!'
             }
         }
     }
-
+    
     post {
         success {
             echo '🎉 Pipeline terminé avec succès!'
-            mail to: 'mbenguemouhamadoumansour@gmail.com',
-                 subject: "✅ Succès du pipeline ${env.JOB_NAME} #${env.BUILD_NUMBER}",
-                 body: """
-Bonjour Mouhamadou 👋,
-
-Le pipeline **${env.JOB_NAME}** s'est terminé **avec succès** 🎉
-
-📘 Détails :
-- Numéro du build : ${env.BUILD_NUMBER}
-- Projet : ${env.JOB_NAME}
-- URL du build : ${env.BUILD_URL}
-
-Cordialement,
-Jenkins 🤖
-                 """
+            echo "Images disponibles:"
+            echo "  - ${BACKEND_IMAGE}:${BUILD_TAG}"
+            echo "  - ${BACKEND_IMAGE}:latest"
+            echo "  - ${FRONTEND_IMAGE}:${BUILD_TAG}"
+            echo "  - ${FRONTEND_IMAGE}:latest"
+            
+            emailext (
+                subject: "✅ Build #${BUILD_NUMBER} - SUCCÈS - ${JOB_NAME}",
+                body: """
+                    <html>
+                    <body>
+                        <h2 style="color: green;">✅ Pipeline exécuté avec succès !</h2>
+                        
+                        <h3>Informations du build:</h3>
+                        <ul>
+                            <li><strong>Projet:</strong> ${JOB_NAME}</li>
+                            <li><strong>Build:</strong> #${BUILD_NUMBER}</li>
+                            <li><strong>Durée:</strong> ${currentBuild.durationString}</li>
+                            <li><strong>Date:</strong> ${new Date()}</li>
+                        </ul>
+                        
+                        <h3>Images Docker publiées sur DockerHub:</h3>
+                        <ul>
+                            <li>${BACKEND_IMAGE}:${BUILD_TAG}</li>
+                            <li>${BACKEND_IMAGE}:latest</li>
+                            <li>${FRONTEND_IMAGE}:${BUILD_TAG}</li>
+                            <li>${FRONTEND_IMAGE}:latest</li>
+                        </ul>
+                        
+                        <h3>Changements Git:</h3>
+                        <p>${currentBuild.changeSets.collect { it.items.collect { "${it.author}: ${it.msg}" }.join('<br>') }.join('<br>')}</p>
+                        
+                        <p><a href="${BUILD_URL}">Voir les détails du build</a></p>
+                        <p><a href="https://hub.docker.com/u/${DOCKERHUB_USERNAME}">Voir sur DockerHub</a></p>
+                    </body>
+                    </html>
+                """,
+                to: "${NOTIFICATION_EMAIL}",
+                mimeType: 'text/html'
+            )
         }
-
+        
         failure {
             echo '❌ Le pipeline a échoué!'
-            mail to: 'mbenguemouhamadoumansour@gmail.com',
-                 subject: "❌ Échec du pipeline ${env.JOB_NAME} #${env.BUILD_NUMBER}",
-                 body: """
-Bonjour Mouhamadou,
-
-Le pipeline **${env.JOB_NAME}** a échoué ❗️
-
-Merci de consulter la console Jenkins pour plus de détails :
-${env.BUILD_URL}
-
-Cordialement,
-Jenkins 🚨
-                 """
+            
+            emailext (
+                subject: "❌ Build #${BUILD_NUMBER} - ÉCHEC - ${JOB_NAME}",
+                body: """
+                    <html>
+                    <body>
+                        <h2 style="color: red;">❌ Pipeline échoué !</h2>
+                        
+                        <h3>Informations du build:</h3>
+                        <ul>
+                            <li><strong>Projet:</strong> ${JOB_NAME}</li>
+                            <li><strong>Build:</strong> #${BUILD_NUMBER}</li>
+                            <li><strong>Durée:</strong> ${currentBuild.durationString}</li>
+                            <li><strong>Date:</strong> ${new Date()}</li>
+                        </ul>
+                        
+                        <h3>Erreur détectée:</h3>
+                        <p>Le build a échoué. Veuillez consulter les logs pour plus de détails.</p>
+                        
+                        <h3>Changements Git:</h3>
+                        <p>${currentBuild.changeSets.collect { it.items.collect { "${it.author}: ${it.msg}" }.join('<br>') }.join('<br>')}</p>
+                        
+                        <p><a href="${BUILD_URL}console" style="color: red; font-weight: bold;">📋 Voir les logs complets</a></p>
+                        <p><a href="${BUILD_URL}">Voir les détails du build</a></p>
+                        
+                        <p style="color: #666; font-size: 12px;">Veuillez corriger l'erreur et pousser les modifications sur GitHub.</p>
+                    </body>
+                    </html>
+                """,
+                to: "${NOTIFICATION_EMAIL}",
+                mimeType: 'text/html'
+            )
         }
-
+        
+        unstable {
+            emailext (
+                subject: "⚠️ Build #${BUILD_NUMBER} - INSTABLE - ${JOB_NAME}",
+                body: """
+                    <html>
+                    <body>
+                        <h2 style="color: orange;">⚠️ Pipeline instable</h2>
+                        
+                        <h3>Informations du build:</h3>
+                        <ul>
+                            <li><strong>Projet:</strong> ${JOB_NAME}</li>
+                            <li><strong>Build:</strong> #${BUILD_NUMBER}</li>
+                            <li><strong>Durée:</strong> ${currentBuild.durationString}</li>
+                        </ul>
+                        
+                        <p>Le build s'est terminé mais avec des avertissements ou des tests instables.</p>
+                        
+                        <p><a href="${BUILD_URL}">Voir les détails</a></p>
+                    </body>
+                    </html>
+                """,
+                to: "${NOTIFICATION_EMAIL}",
+                mimeType: 'text/html'
+            )
+        }
+        
+        changed {
+            script {
+                def previousResult = currentBuild.previousBuild?.result
+                def currentResult = currentBuild.result
+                
+                if (previousResult == 'FAILURE' && currentResult == 'SUCCESS') {
+                    emailext (
+                        subject: "🎉 Build #${BUILD_NUMBER} - RÉPARÉ - ${JOB_NAME}",
+                        body: """
+                            <html>
+                            <body>
+                                <h2 style="color: green;">🎉 Le build est réparé !</h2>
+                                
+                                <p>Le pipeline fonctionne à nouveau après avoir été en échec.</p>
+                                
+                                <h3>Informations:</h3>
+                                <ul>
+                                    <li><strong>Projet:</strong> ${JOB_NAME}</li>
+                                    <li><strong>Build:</strong> #${BUILD_NUMBER}</li>
+                                    <li><strong>Statut précédent:</strong> ${previousResult}</li>
+                                    <li><strong>Statut actuel:</strong> ${currentResult}</li>
+                                </ul>
+                                
+                                <p><a href="${BUILD_URL}">Voir les détails</a></p>
+                            </body>
+                            </html>
+                        """,
+                        to: "${NOTIFICATION_EMAIL}",
+                        mimeType: 'text/html'
+                    )
+                } else if (previousResult == 'SUCCESS' && currentResult == 'FAILURE') {
+                    emailext (
+                        subject: "🚨 Build #${BUILD_NUMBER} - CASSÉ - ${JOB_NAME}",
+                        body: """
+                            <html>
+                            <body>
+                                <h2 style="color: red;">🚨 Le build vient de casser !</h2>
+                                
+                                <p>Le pipeline fonctionnait et vient de tomber en échec.</p>
+                                
+                                <h3>Informations:</h3>
+                                <ul>
+                                    <li><strong>Projet:</strong> ${JOB_NAME}</li>
+                                    <li><strong>Build:</strong> #${BUILD_NUMBER}</li>
+                                    <li><strong>Statut précédent:</strong> ${previousResult}</li>
+                                    <li><strong>Statut actuel:</strong> ${currentResult}</li>
+                                </ul>
+                                
+                                <p><a href="${BUILD_URL}console" style="color: red; font-weight: bold;">Voir les logs</a></p>
+                            </body>
+                            </html>
+                        """,
+                        to: "${NOTIFICATION_EMAIL}",
+                        mimeType: 'text/html'
+                    )
+                }
+            }
+        }
+        
         always {
-            echo '🧹 Nettoyage des images locales...'
+            echo 'Nettoyage des images locales...'
             sh """
                 docker rmi ${BACKEND_IMAGE}:${BUILD_TAG} || true
                 docker rmi ${BACKEND_IMAGE}:latest || true
