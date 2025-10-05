@@ -1,0 +1,8 @@
+node_modules
+npm-debug.log
+build
+.git
+.gitignore
+README.md
+# .env    ← Commentez ou supprimez cette ligne
+.DS_Store
