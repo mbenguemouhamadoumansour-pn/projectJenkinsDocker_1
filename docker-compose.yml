@@ -3,6 +3,23 @@
 version: '3.8'
 
 services:
+  # Service Jenkins pour CI/CD
+  jenkins:
+    image: jenkins/jenkins:lts
+    container_name: sama-jenkins
+    privileged: true
+    user: root
+    ports:
+      - "8080:8080"
+      - "50000:50000"
+    volumes:
+      - jenkins_home:/var/jenkins_home
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - sama-network
+    restart: unless-stopped
+    environment:
+      - DOCKER_HOST=unix:///var/run/docker.sock
   # Service Frontend (React)
   frontend:
     build:
