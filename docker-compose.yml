@@ -1,11 +1,11 @@
-# docker-compose.yml à la racine du projet samaProjet/
-
 version: '3.8'
 
 services:
   # Service Jenkins pour CI/CD
   jenkins:
-    image: jenkins/jenkins:lts
+    build:
+      context: .
+      dockerfile: Dockerfile.jenkins
     container_name: sama-jenkins
     privileged: true
     user: root
@@ -18,8 +18,7 @@ services:
     networks:
       - sama-network
     restart: unless-stopped
-    environment:
-      - DOCKER_HOST=unix:///var/run/docker.sock
+
   # Service Frontend (React)
   frontend:
     build:
@@ -53,17 +52,17 @@ services:
       - sama-network
     restart: unless-stopped
 
-  # Service Base de données (optionnel)
+  # Service Base de données (MongoDB)
   database:
-    image: mongo:latest  # ou postgres, mysql, etc.
+    image: mongo:latest
     container_name: sama-database
     ports:
       - "27017:27017"
     volumes:
       - db-data:/data/db
     environment:
-      - MONGO_INITDB_ROOT_USERNAME=admin
-      - MONGO_INITDB_ROOT_PASSWORD=password123
+      MONGO_INITDB_ROOT_USERNAME: admin
+      MONGO_INITDB_ROOT_PASSWORD: password123
     networks:
       - sama-network
     restart: unless-stopped
@@ -73,4 +72,5 @@ networks:
     driver: bridge
 
 volumes:
+  jenkins_home:
   db-data:
