@@ -4,7 +4,7 @@ pipeline {
     environment {
         // Remplacez par votre username DockerHub
         DOCKERHUB_USERNAME = 'mouhamadoumbengue'
-        DOCKERHUB_CREDENTIALS = credentials('dockerhub jenkins')
+        DOCKERHUB_CREDENTIALS = credentials('dockerhub-credentials')
         FRONTEND_IMAGE = "${DOCKERHUB_USERNAME}/sama-frontend"
         BACKEND_IMAGE = "${DOCKERHUB_USERNAME}/sama-backend"
         BUILD_TAG = "${BUILD_NUMBER}"
