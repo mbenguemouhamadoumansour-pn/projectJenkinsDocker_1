@@ -1,20 +1,32 @@
-# Backend Dockerfile (Node.js/Express)
-FROM node:18-alpine
+# Étape 1 : Build de l'application
+FROM node:18-alpine AS build
 
-# Répertoire de travail
+# Définir le répertoire de travail
 WORKDIR /app
 
-# Copier les fichiers de dépendances
+# Copier les fichiers package.json et package-lock.json
 COPY package*.json ./
 
 # Installer les dépendances
-RUN npm install --production
+RUN npm install
 
-# Copier le code source
+# Copier tout le code source
 COPY . .
 
-# Exposer le port du backend
-EXPOSE 8080
+# Donner les permissions d'exécution
+RUN chmod -R 755 /app/node_modules/.bin
 
-# Démarrer l'application
-CMD ["npm", "start"]
+# Build de l'application pour la production
+RUN npm run build
+
+# Étape 2 : Servir l'application avec Nginx
+FROM nginx:alpine
+
+# Copier les fichiers build depuis l'étape précédente
+COPY --from=build /app/build /usr/share/nginx/html
+
+# Exposer le port 80
+EXPOSE 80
+
+# Démarrer Nginx
+CMD ["nginx", "-g", "daemon off;"]
