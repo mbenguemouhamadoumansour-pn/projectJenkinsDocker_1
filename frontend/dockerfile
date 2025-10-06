@@ -7,14 +7,14 @@ WORKDIR /app
 COPY package*.json ./
 
 # Installer les dépendances
-RUN npm install
+RUN npm ci
 
 # Copier le reste du code
 COPY . .
 
-# ✅ Corriger les permissions pour éviter l'erreur "Permission denied"
-RUN chmod -R 755 /app
-RUN chmod +x node_modules/.bin/react-scripts
+# ✅ Argument pour l'URL du backend
+ARG REACT_APP_API_URL
+ENV REACT_APP_API_URL=$REACT_APP_API_URL
 
 # Construire l'application React
 RUN npm run build
@@ -24,6 +24,9 @@ FROM nginx:alpine
 
 # Copier le build React vers le dossier HTML de Nginx
 COPY --from=build /app/build /usr/share/nginx/html
+
+# Configuration Nginx
+COPY nginx.conf /etc/nginx/conf.d/default.conf
 
 # Exposer le port 80
 EXPOSE 80

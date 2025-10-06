@@ -1,188 +1,170 @@
 pipeline {
     agent any
-
+    
     environment {
-        DOCKERHUB_USERNAME = 'mouhamadoumbengue'
         DOCKERHUB_CREDENTIALS = credentials('dockerhub-credentials')
-        FRONTEND_IMAGE = "${DOCKERHUB_USERNAME}/sama-frontend"
-        BACKEND_IMAGE = "${DOCKERHUB_USERNAME}/sama-backend"
-        BUILD_TAG = "${BUILD_NUMBER}"
-        NOTIFICATION_EMAIL = 'mbenguemouhamadoumansour@gmail.com'
-        EC2_HOST = '35.92.219.49'
-        EC2_USER = 'ubuntu'
+        EC2_HOST = '35.92.219.49' // ⚠️ REMPLACEZ PAR VOTRE IP EC2
+        BACKEND_IMAGE = 'mouhamadoumbengue/sama-backend'
+        FRONTEND_IMAGE = 'mouhamadoumbengue/sama-frontend'
     }
-
+    
     stages {
         stage('Checkout') {
             steps {
-                echo '📦 Récupération du code depuis GitHub...'
+                echo '📥 Récupération du code...'
                 checkout scm
             }
         }
-
-        stage('Install Dependencies') {
-            parallel {
-                stage('Backend Dependencies') {
-                    steps {
-                        dir('backend') {
-                            echo '📦 Installation des dépendances backend...'
-                            sh 'npm install'
-                        }
-                    }
-                }
-                stage('Frontend Dependencies') {
-                    steps {
-                        dir('frontend') {
-                            echo '📦 Installation des dépendances frontend...'
-                            sh 'npm install'
-                        }
-                    }
+        
+        stage('Build Backend') {
+            steps {
+                echo '🔨 Construction de l\'image backend...'
+                script {
+                    sh "docker build -t ${BACKEND_IMAGE}:${BUILD_NUMBER} ./backend"
+                    sh "docker tag ${BACKEND_IMAGE}:${BUILD_NUMBER} ${BACKEND_IMAGE}:latest"
                 }
             }
         }
-
-        stage('Run Tests') {
-            parallel {
-                stage('Test Backend') {
-                    steps {
-                        dir('backend') {
-                            echo '🧪 Tests backend...'
-                            sh 'npm test || echo "⚠️ Aucun test configuré pour le backend"'
-                        }
-                    }
-                }
-                stage('Test Frontend') {
-                    steps {
-                        dir('frontend') {
-                            echo '🧪 Tests frontend...'
-                            sh 'CI=true npm test || echo "⚠️ Aucun test configuré pour le frontend"'
-                        }
-                    }
+        
+        stage('Build Frontend') {
+            steps {
+                echo '🔨 Construction de l\'image frontend...'
+                script {
+                    sh """
+                        docker build \
+                            --build-arg REACT_APP_API_URL=http://${EC2_HOST}:5000/api/smartphones \
+                            -t ${FRONTEND_IMAGE}:${BUILD_NUMBER} \
+                            ./frontend
+                    """
+                    sh "docker tag ${FRONTEND_IMAGE}:${BUILD_NUMBER} ${FRONTEND_IMAGE}:latest"
                 }
             }
         }
-
-        stage('Build Docker Images') {
-            parallel {
-                stage('Build Backend Image') {
-                    steps {
-                        dir('backend') {
-                            echo "🐳 Construction de l'image backend..."
-                            sh "docker build -t ${BACKEND_IMAGE}:${BUILD_TAG} ."
-                            sh "docker tag ${BACKEND_IMAGE}:${BUILD_TAG} ${BACKEND_IMAGE}:latest"
-                        }
-                    }
-                }
-                stage('Build Frontend Image') {
-                    steps {
-                        dir('frontend') {
-                            echo "🐳 Construction de l'image frontend..."
-                            sh "docker build -t ${FRONTEND_IMAGE}:${BUILD_TAG} ."
-                            sh "docker tag ${FRONTEND_IMAGE}:${BUILD_TAG} ${FRONTEND_IMAGE}:latest"
-                        }
-                    }
-                }
-            }
-        }
-
+        
         stage('Push to DockerHub') {
             steps {
-                echo '🔑 Connexion à DockerHub...'
-                sh 'echo $DOCKERHUB_CREDENTIALS_PSW | docker login -u $DOCKERHUB_CREDENTIALS_USR --password-stdin'
-
-                echo '📤 Push des images vers DockerHub...'
-                sh "docker push ${BACKEND_IMAGE}:${BUILD_TAG}"
-                sh "docker push ${BACKEND_IMAGE}:latest"
-                sh "docker push ${FRONTEND_IMAGE}:${BUILD_TAG}"
-                sh "docker push ${FRONTEND_IMAGE}:latest"
-
-                echo '✅ Images publiées sur DockerHub avec succès!'
+                echo '📤 Envoi vers DockerHub...'
+                script {
+                    sh 'echo $DOCKERHUB_CREDENTIALS_PSW | docker login -u $DOCKERHUB_CREDENTIALS_USR --password-stdin'
+                    sh "docker push ${BACKEND_IMAGE}:${BUILD_NUMBER}"
+                    sh "docker push ${BACKEND_IMAGE}:latest"
+                    sh "docker push ${FRONTEND_IMAGE}:${BUILD_NUMBER}"
+                    sh "docker push ${FRONTEND_IMAGE}:latest"
+                }
             }
         }
-
+        
         stage('Deploy to EC2') {
             steps {
-                echo '🚀 Déploiement sur AWS EC2...'
+                echo '🚀 Déploiement sur EC2...'
+                script {
+                    sshagent(['ec2-ssh-key']) {
+                        sh """
+                            ssh -o StrictHostKeyChecking=no ubuntu@${EC2_HOST} '
+                                # Télécharger docker-compose.yml
+                                cd /home/ubuntu
+                                
+                                # Créer le fichier docker-compose.yml
+                                cat > docker-compose.yml << EOF
+version: "3.8"
 
-                sshagent(credentials: ['ec2-deploy-key']) {
-                    sh """
-                        ssh -o StrictHostKeyChecking=no ${EC2_USER}@${EC2_HOST} \\
-                        "echo \\"🔍 Vérification de Docker...\\" && \\
-                        if ! command -v docker &> /dev/null; then \\
-                            echo \\"❌ Docker n'est pas installé sur EC2\\" && exit 1; \\
-                        fi && \\
-                        echo \\"🛑 Arrêt des anciens conteneurs...\\" && \\
-                        docker stop sama-backend || true && \\
-                        docker rm sama-backend || true && \\
-                        docker stop sama-frontend || true && \\
-                        docker rm sama-frontend || true && \\
-                        echo \\"📥 Pull des images...\\" && \\
-                        docker pull ${BACKEND_IMAGE}:latest && \\
-                        docker pull ${FRONTEND_IMAGE}:latest && \\
-                        echo \\"🚀 Démarrage du backend...\\" && \\
-                        docker run -d --name sama-backend -p 5000:5000 ${BACKEND_IMAGE}:latest && \\
-                        echo \\"🚀 Démarrage du frontend...\\" && \\
-                        docker run -d --name sama-frontend -p 3000:3000 ${FRONTEND_IMAGE}:latest && \\
-                        echo \\"✅ Déploiement terminé sur EC2\\"
-                        "
-                    """
+services:
+  database:
+    image: mongo:7
+    container_name: sama-database
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb_data:/data/db
+    restart: unless-stopped
+    networks:
+      - sama-network
+
+  backend:
+    image: ${BACKEND_IMAGE}:latest
+    container_name: sama-backend
+    ports:
+      - "5000:5000"
+    environment:
+      - NODE_ENV=production
+      - PORT=5000
+      - MONGODB_URI=mongodb://database:27017/samadb
+    depends_on:
+      - database
+    restart: unless-stopped
+    networks:
+      - sama-network
+
+  frontend:
+    image: ${FRONTEND_IMAGE}:latest
+    container_name: sama-frontend
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+    networks:
+      - sama-network
+
+volumes:
+  mongodb_data:
+
+networks:
+  sama-network:
+    driver: bridge
+EOF
+
+                                # Arrêter les anciens conteneurs
+                                docker-compose down || true
+                                
+                                # Supprimer les anciennes images
+                                docker system prune -af
+                                
+                                # Télécharger les nouvelles images
+                                docker pull ${BACKEND_IMAGE}:latest
+                                docker pull ${FRONTEND_IMAGE}:latest
+                                docker pull mongo:7
+                                
+                                # Démarrer avec docker-compose
+                                docker-compose up -d
+                                
+                                # Attendre que les services démarrent
+                                sleep 10
+                                
+                                # Vérifier le statut
+                                docker-compose ps
+                                
+                                # Tester le backend
+                                curl -f http://localhost:5000/api/smartphones || echo "⚠️ Backend pas encore prêt"
+                            '
+                        """
+                    }
                 }
-
-                echo '✅ Déploiement sur EC2 terminé!'
+            }
+        }
+        
+        stage('Cleanup') {
+            steps {
+                echo '🧹 Nettoyage des images locales...'
+                script {
+                    sh "docker rmi ${BACKEND_IMAGE}:${BUILD_NUMBER} || true"
+                    sh "docker rmi ${FRONTEND_IMAGE}:${BUILD_NUMBER} || true"
+                }
             }
         }
     }
-
+    
     post {
-        success {
-            echo '🎉 Pipeline terminé avec succès!'
-            emailext (
-                subject: "✅ Build #${BUILD_NUMBER} - DÉPLOYÉ AVEC SUCCÈS - ${JOB_NAME}",
-                body: """
-                    <html>
-                    <body>
-                        <h2 style="color: green;">✅ Application déployée avec succès sur EC2 !</h2>
-                        <ul>
-                            <li><strong>Projet:</strong> ${JOB_NAME}</li>
-                            <li><strong>Build:</strong> #${BUILD_NUMBER}</li>
-                            <li><strong>Date:</strong> ${new Date()}</li>
-                            <li><a href="http://${EC2_HOST}:3000">Frontend</a></li>
-                            <li><a href="http://${EC2_HOST}:5000">Backend</a></li>
-                        </ul>
-                    </body>
-                    </html>
-                """,
-                to: "${NOTIFICATION_EMAIL}",
-                mimeType: 'text/html'
-            )
-        }
-
-        failure {
-            echo '❌ Le pipeline a échoué!'
-            emailext (
-                subject: "❌ Build #${BUILD_NUMBER} - ÉCHEC DÉPLOIEMENT - ${JOB_NAME}",
-                body: """
-                    <html>
-                    <body>
-                        <h2 style="color: red;">❌ Le déploiement sur EC2 a échoué</h2>
-                        <p><a href="${BUILD_URL}console">📋 Voir les logs Jenkins</a></p>
-                    </body>
-                    </html>
-                """,
-                to: "${NOTIFICATION_EMAIL}",
-                mimeType: 'text/html'
-            )
-        }
-
         always {
-            echo '🧹 Nettoyage des images locales...'
-            sh """
-                docker rmi ${BACKEND_IMAGE}:${BUILD_TAG} || true
-                docker rmi ${BACKEND_IMAGE}:latest || true
-                docker rmi ${FRONTEND_IMAGE}:${BUILD_TAG} || true
-                docker rmi ${FRONTEND_IMAGE}:latest || true
-            """
             sh 'docker logout || true'
+        }
+        success {
+            echo '✅ Déploiement réussi!'
+            echo "Frontend: http://${EC2_HOST}"
+            echo "Backend: http://${EC2_HOST}:5000/api/smartphones"
+        }
+        failure {
+            echo '❌ Échec du déploiement'
         }
     }
 }

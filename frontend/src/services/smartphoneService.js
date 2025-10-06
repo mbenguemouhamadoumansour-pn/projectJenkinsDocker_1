@@ -1,6 +1,12 @@
 import axios from 'axios';
 
-const API_URL = 'http://localhost:5000/api/smartphones';
+// ✅ Utiliser une variable d'environnement ou détecter automatiquement
+const API_URL = process.env.REACT_APP_API_URL || 
+                (window.location.hostname === 'localhost' 
+                  ? 'http://localhost:5000/api/smartphones'
+                  : `http://${window.location.hostname}:5000/api/smartphones`);
+
+console.log('🔗 API_URL utilisée:', API_URL);
 
 // Récupérer tous les smartphones
 const getAllSmartphones = () => {
