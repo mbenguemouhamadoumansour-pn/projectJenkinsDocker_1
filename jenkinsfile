@@ -1,6 +1,6 @@
 pipeline {
     agent any
-    
+
     environment {
         DOCKERHUB_USERNAME = 'mouhamadoumbengue'
         DOCKERHUB_CREDENTIALS = credentials('dockerhub-credentials')
@@ -8,10 +8,10 @@ pipeline {
         BACKEND_IMAGE = "${DOCKERHUB_USERNAME}/sama-backend"
         BUILD_TAG = "${BUILD_NUMBER}"
         NOTIFICATION_EMAIL = 'mbenguemouhamadoumansour@gmail.com'
-        EC2_HOST = '35.92.219.49' // ⚠️ Remplace par ton IP publique EC2 (ex: 3.92.110.45)
+        EC2_HOST = '35.92.219.49'
         EC2_USER = 'ubuntu'
     }
-    
+
     stages {
         stage('Checkout') {
             steps {
@@ -19,7 +19,7 @@ pipeline {
                 checkout scm
             }
         }
-        
+
         stage('Install Dependencies') {
             parallel {
                 stage('Backend Dependencies') {
@@ -40,7 +40,7 @@ pipeline {
                 }
             }
         }
-        
+
         stage('Run Tests') {
             parallel {
                 stage('Test Backend') {
@@ -61,7 +61,7 @@ pipeline {
                 }
             }
         }
-        
+
         stage('Build Docker Images') {
             parallel {
                 stage('Build Backend Image') {
@@ -84,78 +84,77 @@ pipeline {
                 }
             }
         }
-        
+
         stage('Push to DockerHub') {
             steps {
                 echo '🔑 Connexion à DockerHub...'
                 sh 'echo $DOCKERHUB_CREDENTIALS_PSW | docker login -u $DOCKERHUB_CREDENTIALS_USR --password-stdin'
-                
+
                 echo '📤 Push des images vers DockerHub...'
                 sh "docker push ${BACKEND_IMAGE}:${BUILD_TAG}"
                 sh "docker push ${BACKEND_IMAGE}:latest"
                 sh "docker push ${FRONTEND_IMAGE}:${BUILD_TAG}"
                 sh "docker push ${FRONTEND_IMAGE}:latest"
-                
+
                 echo '✅ Images publiées sur DockerHub avec succès!'
             }
         }
 
-        // 🚀 NOUVELLE ÉTAPE : Déploiement automatique sur EC2
         stage('Deploy to EC2') {
             steps {
                 echo '🚀 Déploiement sur AWS EC2...'
-                
+
                 sshagent(credentials: ['ec2-deploy-key']) {
                     sh """
                         ssh -o StrictHostKeyChecking=no ${EC2_USER}@${EC2_HOST} '
-                            cd /home/ubuntu
-                            ./deploy.sh
+                            echo "🔍 Vérification de Docker..."
+                            if ! command -v docker &> /dev/null; then
+                                echo "❌ Docker n\'est pas installé sur EC2"
+                                exit 1
+                            fi
+
+                            echo "🛑 Arrêt des anciens conteneurs..."
+                            docker stop sama-backend || true
+                            docker rm sama-backend || true
+                            docker stop sama-frontend || true
+                            docker rm sama-frontend || true
+
+                            echo "📥 Pull des dernières images depuis DockerHub..."
+                            docker pull ${BACKEND_IMAGE}:latest
+                            docker pull ${FRONTEND_IMAGE}:latest
+
+                            echo "🚀 Démarrage du backend..."
+                            docker run -d --name sama-backend -p 5000:5000 ${BACKEND_IMAGE}:latest
+
+                            echo "🚀 Démarrage du frontend..."
+                            docker run -d --name sama-frontend -p 3000:3000 ${FRONTEND_IMAGE}:latest
+
+                            echo "✅ Déploiement terminé avec succès sur EC2."
                         '
                     """
                 }
-                
+
                 echo '✅ Déploiement sur EC2 terminé!'
             }
         }
     }
-    
+
     post {
         success {
             echo '🎉 Pipeline terminé avec succès!'
-            echo "Images disponibles:"
-            echo "  - ${BACKEND_IMAGE}:${BUILD_TAG}"
-            echo "  - ${BACKEND_IMAGE}:latest"
-            echo "  - ${FRONTEND_IMAGE}:${BUILD_TAG}"
-            echo "  - ${FRONTEND_IMAGE}:latest"
-            
             emailext (
                 subject: "✅ Build #${BUILD_NUMBER} - DÉPLOYÉ AVEC SUCCÈS - ${JOB_NAME}",
                 body: """
                     <html>
                     <body>
                         <h2 style="color: green;">✅ Application déployée avec succès sur EC2 !</h2>
-                        
-                        <h3>Informations du build:</h3>
                         <ul>
                             <li><strong>Projet:</strong> ${JOB_NAME}</li>
                             <li><strong>Build:</strong> #${BUILD_NUMBER}</li>
-                            <li><strong>Durée:</strong> ${currentBuild.durationString}</li>
                             <li><strong>Date:</strong> ${new Date()}</li>
+                            <li><a href="http://${EC2_HOST}:3000">Frontend</a></li>
+                            <li><a href="http://${EC2_HOST}:5000">Backend</a></li>
                         </ul>
-                        
-                        <h3>URLs de production:</h3>
-                        <ul>
-                            <li><a href="http://${EC2_HOST}:3000">Frontend: http://${EC2_HOST}:3000</a></li>
-                            <li><a href="http://${EC2_HOST}:5000">Backend: http://${EC2_HOST}:5000</a></li>
-                        </ul>
-
-                        <h3>Images DockerHub:</h3>
-                        <ul>
-                            <li>${BACKEND_IMAGE}:${BUILD_TAG}</li>
-                            <li>${FRONTEND_IMAGE}:${BUILD_TAG}</li>
-                        </ul>
-
-                        <p><a href="${BUILD_URL}">Voir les détails du build</a></p>
                     </body>
                     </html>
                 """,
@@ -163,18 +162,16 @@ pipeline {
                 mimeType: 'text/html'
             )
         }
-        
+
         failure {
             echo '❌ Le pipeline a échoué!'
-            
             emailext (
                 subject: "❌ Build #${BUILD_NUMBER} - ÉCHEC DÉPLOIEMENT - ${JOB_NAME}",
                 body: """
                     <html>
                     <body>
                         <h2 style="color: red;">❌ Le déploiement sur EC2 a échoué</h2>
-                        <p>Consultez les logs Jenkins pour identifier la cause de l'échec.</p>
-                        <p><a href="${BUILD_URL}console" style="color:red; font-weight:bold;">📋 Voir les logs</a></p>
+                        <p><a href="${BUILD_URL}console">📋 Voir les logs Jenkins</a></p>
                     </body>
                     </html>
                 """,
@@ -191,7 +188,7 @@ pipeline {
                 docker rmi ${FRONTEND_IMAGE}:${BUILD_TAG} || true
                 docker rmi ${FRONTEND_IMAGE}:latest || true
             """
-            sh 'docker logout'
+            sh 'docker logout || true'
         }
     }
 }
