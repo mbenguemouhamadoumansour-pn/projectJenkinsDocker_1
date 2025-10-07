@@ -3,7 +3,7 @@ pipeline {
     
     environment {
         DOCKERHUB_CREDENTIALS = credentials('dockerhub-credentials')
-        EC2_HOST = '35.92.219.49' // ⚠️ REMPLACEZ PAR VOTRE IP EC2
+        EC2_HOST = '44.252.37.135' // ⚠️ REMPLACEZ PAR VOTRE IP EC2
         BACKEND_IMAGE = 'mouhamadoumbengue/sama-backend'
         FRONTEND_IMAGE = 'mouhamadoumbengue/sama-frontend'
     }
