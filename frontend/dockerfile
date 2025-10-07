@@ -16,6 +16,10 @@ COPY . .
 ARG REACT_APP_API_URL
 ENV REACT_APP_API_URL=$REACT_APP_API_URL
 
+RUN chmod -R 755 /app
+RUN chmod +x node_modules/.bin/react-scripts
+
+
 # Construire l'application React
 RUN npm run build
 
