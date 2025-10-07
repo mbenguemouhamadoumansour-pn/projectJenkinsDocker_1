@@ -58,7 +58,7 @@ pipeline {
             steps {
                 echo '🚀 Déploiement sur EC2...'
                 script {
-                    sshagent(['ec2-ssh-key']) {
+                    sshagent(['ubuntu-key']) {
                         sh """
                             ssh -o StrictHostKeyChecking=no ubuntu@${EC2_HOST} '
                                 # Télécharger docker-compose.yml
