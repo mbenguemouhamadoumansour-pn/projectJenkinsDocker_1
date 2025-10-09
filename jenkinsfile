@@ -3,7 +3,7 @@ pipeline {
     
     environment {
         DOCKERHUB_CREDENTIALS = credentials('dockerhub-credentials')
-        EC2_HOST = '44.250.219.140' // ⚠️ REMPLACEZ PAR VOTRE IP EC2
+        EC2_HOST = '52.12.221.130' // ⚠️ REMPLACEZ PAR VOTRE IP EC2
         BACKEND_IMAGE = 'mouhamadoumbengue/sama-backend'
         FRONTEND_IMAGE = 'mouhamadoumbengue/sama-frontend'
     }
@@ -58,7 +58,7 @@ pipeline {
             steps {
                 echo '🚀 Déploiement sur EC2...'
                 script {
-                    sshagent(['ubuntu']) {
+                    sshagent(['jenkins-ec2']) {
                         sh """
                             ssh -o StrictHostKeyChecking=no ubuntu@${EC2_HOST} '
                                 # Télécharger docker-compose.yml
