@@ -10,14 +10,14 @@ pipeline {
     }
     
     stages {
-        stage('🔍 Checkout') {
+        stage('Checkout') {
             steps {
                 echo '📥 Récupération du code depuis GitHub...'
                 checkout scm
             }
         }
         
-        stage('🔨 Build Backend') {
+        stage('Build Backend') {
             steps {
                 echo '🔨 Construction de l\'image backend...'
                 script {
@@ -34,7 +34,7 @@ pipeline {
             }
         }
         
-        stage('🔨 Build Frontend') {
+        stage('Build Frontend') {
             steps {
                 echo '🔨 Construction de l\'image frontend...'
                 script {
@@ -56,7 +56,7 @@ pipeline {
             }
         }
         
-        stage('📤 Push to DockerHub') {
+        stage('Push to DockerHub') {
             steps {
                 echo '📤 Envoi vers DockerHub...'
                 script {
@@ -76,7 +76,7 @@ pipeline {
             }
         }
         
-        stage('🚀 Deploy to EC2') {
+        stage('Deploy to EC2') {
             steps {
                 echo '🚀 Déploiement sur EC2...'
                 script {
