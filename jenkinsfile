@@ -3,21 +3,21 @@ pipeline {
     
     environment {
         DOCKERHUB_CREDENTIALS = credentials('dockerhub-credentials')
-        EC2_HOST = '52.12.221.130' // ⚠️ REMPLACEZ PAR VOTRE IP EC2
+        EC2_HOST = '35.89.146.241' // ⚠️ REMPLACEZ PAR VOTRE IP EC2
         BACKEND_IMAGE = 'mouhamadoumbengue/sama-backend'
         FRONTEND_IMAGE = 'mouhamadoumbengue/sama-frontend'
         RECIPIENT_EMAIL = 'mbenguemouhamadoumansour@gmail.com'
     }
     
     stages {
-        stage('Checkout') {
+        stage('🔍 Checkout') {
             steps {
                 echo '📥 Récupération du code depuis GitHub...'
                 checkout scm
             }
         }
         
-        stage('Build Backend') {
+        stage('🔨 Build Backend') {
             steps {
                 echo '🔨 Construction de l\'image backend...'
                 script {
@@ -34,7 +34,7 @@ pipeline {
             }
         }
         
-        stage('Build Frontend') {
+        stage('🔨 Build Frontend') {
             steps {
                 echo '🔨 Construction de l\'image frontend...'
                 script {
@@ -56,7 +56,7 @@ pipeline {
             }
         }
         
-        stage('Push to DockerHub') {
+        stage('📤 Push to DockerHub') {
             steps {
                 echo '📤 Envoi vers DockerHub...'
                 script {
@@ -76,7 +76,7 @@ pipeline {
             }
         }
         
-        stage('Deploy to EC2') {
+        stage('🚀 Deploy to EC2') {
             steps {
                 echo '🚀 Déploiement sur EC2...'
                 script {
