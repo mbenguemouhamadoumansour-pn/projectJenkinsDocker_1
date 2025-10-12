@@ -4,7 +4,7 @@ pipeline {
     environment {
         // Configuration DockerHub
         DOCKERHUB_CREDENTIALS = credentials('dockerhub-credentials')
-<<<<<<< HEAD
+
         DOCKERHUB_USERNAME = 'mouhamadoumbengue'  // À MODIFIER
         
         // Noms des images
