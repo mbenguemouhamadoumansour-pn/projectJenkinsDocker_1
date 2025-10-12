@@ -145,7 +145,7 @@ pipeline {
                 echo 'Arrêt des anciens conteneurs...'
                 script {
                     sh '''
-                        docker compose down || true
+                        docker-compose down || true
                         docker stop smartphone-backend smartphone-frontend smartphone-mongo || true
                         docker rm smartphone-backend smartphone-frontend smartphone-mongo || true
                     '''
@@ -161,7 +161,7 @@ pipeline {
                     sh """
                         export BACKEND_IMAGE=${BACKEND_IMAGE}:latest
                         export FRONTEND_IMAGE=${FRONTEND_IMAGE}:latest
-                        docker compose up -d
+                        docker-compose up -d
                     """
                     
                     echo 'Attente du démarrage des conteneurs...'
@@ -292,7 +292,7 @@ pipeline {
         
         failure {
             echo '❌ Le pipeline a échoué !'
-            sh 'docker compose down || true'
+            sh 'docker-compose down || true'
             
             emailext(
                 subject: "❌ FAILED: Smartphone App Build #${BUILD_NUMBER}",
