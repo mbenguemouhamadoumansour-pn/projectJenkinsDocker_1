@@ -4,7 +4,7 @@ pipeline {
     environment {
         // Configuration DockerHub - À MODIFIER
         DOCKERHUB_CREDENTIALS = credentials('dockerhub-credentials')
-        DOCKERHUB_USERNAME = 'votre-username-dockerhub'  // ⚠️ MODIFIEZ ICI
+        DOCKERHUB_USERNAME = 'mouhamadoumbengue'  // ⚠️ MODIFIEZ ICI
         
         // Noms des images
         BACKEND_IMAGE = "${DOCKERHUB_USERNAME}/smartphone-backend"
@@ -20,7 +20,7 @@ pipeline {
         SONAR_PROJECT_KEY = 'Smartphone-Management-App'
         
         // Configuration Email - À MODIFIER
-        RECIPIENT_EMAIL = 'votre-email@example.com'  // ⚠️ MODIFIEZ ICI
+        RECIPIENT_EMAIL = 'mbenguemouhamadoumansour@gmail.com'  // ⚠️ MODIFIEZ ICI
     }
     
     stages {
