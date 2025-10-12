@@ -22,12 +22,7 @@ pipeline {
         
         // Configuration Email
         RECIPIENT_EMAIL = 'mbenguemouhamadoumansour@gmail.com'  // À MODIFIER
-=======
-        EC2_HOST = '35.89.146.241' // ⚠️ REMPLACEZ PAR VOTRE IP EC2
-        BACKEND_IMAGE = 'mouhamadoumbengue/sama-backend'
-        FRONTEND_IMAGE = 'mouhamadoumbengue/sama-frontend'
-        RECIPIENT_EMAIL = 'mbenguemouhamadoumansour@gmail.com'
->>>>>>> 80f35e1e5abec8bb7d4d4ab48e71053212c2108d
+
     }
     
     stages {
