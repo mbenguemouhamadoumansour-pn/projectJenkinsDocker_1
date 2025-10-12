@@ -2,55 +2,144 @@ pipeline {
     agent any
     
     environment {
+        // Configuration DockerHub
         DOCKERHUB_CREDENTIALS = credentials('dockerhub-credentials')
-        EC2_HOST = '35.89.146.241' // ⚠️ REMPLACEZ PAR VOTRE IP EC2
-        BACKEND_IMAGE = 'mouhamadoumbengue/sama-backend'
-        FRONTEND_IMAGE = 'mouhamadoumbengue/sama-frontend'
-        RECIPIENT_EMAIL = 'mbenguemouhamadoumansour@gmail.com'
+        DOCKERHUB_USERNAME = 'mouhamadoumbengue'  // À MODIFIER
+        
+        // Noms des images
+        BACKEND_IMAGE = "${DOCKERHUB_USERNAME}/smartphone-backend"
+        FRONTEND_IMAGE = "${DOCKERHUB_USERNAME}/smartphone-frontend"
+        IMAGE_TAG = "${BUILD_NUMBER}"
+        
+        // Configuration de l'application
+        BACKEND_PORT = '5000'
+        FRONTEND_PORT = '80'
+        MONGO_PORT = '27017'
+        
+        // Configuration SonarQube
+        SONAR_PROJECT_KEY = 'Smartphone-Management-App'
+        
+        // Configuration Email
+        RECIPIENT_EMAIL = 'mbenguemouhamadoumansour@gmail.com'  // À MODIFIER
     }
     
     stages {
-        stage('🔍 Checkout') {
+        stage('🧹 Cleanup Workspace') {
             steps {
-                echo '📥 Récupération du code depuis GitHub...'
-                checkout scm
+                echo 'Nettoyage du workspace...'
+                cleanWs()
             }
         }
         
-        stage('🔨 Build Backend') {
+        stage('🔄 Checkout from GitHub') {
             steps {
-                echo '🔨 Construction de l\'image backend...'
-                script {
-                    try {
-                        sh "docker build -t ${BACKEND_IMAGE}:${BUILD_NUMBER} ./backend"
-                        sh "docker tag ${BACKEND_IMAGE}:${BUILD_NUMBER} ${BACKEND_IMAGE}:latest"
-                        echo '✅ Backend image construite avec succès'
-                    } catch (Exception e) {
-                        echo "❌ ERREUR lors du build backend: ${e.message}"
-                        currentBuild.result = 'FAILURE'
-                        error("Build backend échoué: ${e.message}")
+                echo 'Récupération du code depuis GitHub...'
+                git branch: 'main',
+                    credentialsId: 'github-credentials',
+                    url: 'https://github.com/mbenguemouhamadoumansour-pn/projectJenkinsDocker_1.git'  // À MODIFIER
+            }
+        }
+        
+        stage('📦 Install Dependencies') {
+            parallel {
+                stage('Backend Dependencies') {
+                    steps {
+                        dir('backend') {
+                            echo 'Installation des dépendances backend...'
+                            sh 'npm install'
+                        }
+                    }
+                }
+                stage('Frontend Dependencies') {
+                    steps {
+                        dir('frontend') {
+                            echo 'Installation des dépendances frontend...'
+                            sh 'npm install'
+                        }
                     }
                 }
             }
         }
         
-        stage('🔨 Build Frontend') {
+        stage('🧪 Run Tests') {
+            parallel {
+                stage('Backend Tests') {
+                    steps {
+                        dir('backend') {
+                            echo 'Exécution des tests backend avec coverage...'
+                            sh '''
+                                npm test -- --coverage --watchAll=false || true
+                            '''
+                        }
+                    }
+                }
+                stage('Frontend Tests') {
+                    steps {
+                        dir('frontend') {
+                            echo 'Exécution des tests frontend avec coverage...'
+                            sh '''
+                                CI=true npm test -- --coverage --watchAll=false || true
+                            '''
+                        }
+                    }
+                }
+            }
+        }
+        
+        stage('🔍 SonarQube Analysis') {
             steps {
-                echo '🔨 Construction de l\'image frontend...'
+                echo 'Analyse de la qualité du code avec SonarQube...'
                 script {
-                    try {
+                    def scannerHome = tool 'SonarScanner'
+                    withSonarQubeEnv('SonarQube') {
                         sh """
-                            docker build \
-                                --build-arg REACT_APP_API_URL=http://${EC2_HOST}:5000/api/smartphones \
-                                -t ${FRONTEND_IMAGE}:${BUILD_NUMBER} \
-                                ./frontend
+                            ${scannerHome}/bin/sonar-scanner \
+                              -Dsonar.projectKey=${SONAR_PROJECT_KEY} \
+                              -Dsonar.sources=. \
+                              -Dsonar.host.url=http://localhost:9000
                         """
-                        sh "docker tag ${FRONTEND_IMAGE}:${BUILD_NUMBER} ${FRONTEND_IMAGE}:latest"
-                        echo '✅ Frontend image construite avec succès'
-                    } catch (Exception e) {
-                        echo "❌ ERREUR lors du build frontend: ${e.message}"
-                        currentBuild.result = 'FAILURE'
-                        error("Build frontend échoué: ${e.message}")
+                    }
+                }
+            }
+        }
+        
+        stage('🚦 Quality Gate') {
+            steps {
+                echo 'Vérification du Quality Gate SonarQube...'
+                timeout(time: 5, unit: 'MINUTES') {
+                    script {
+                        def qg = waitForQualityGate()
+                        if (qg.status != 'OK') {
+                            error "Pipeline interrompu : Quality Gate échoué avec le statut ${qg.status}"
+                        }
+                        echo '✅ Quality Gate passé avec succès !'
+                    }
+                }
+            }
+        }
+        
+        stage('🐳 Build Docker Images') {
+            parallel {
+                stage('Build Backend Image') {
+                    steps {
+                        dir('backend') {
+                            echo 'Construction de l\'image Docker backend...'
+                            sh """
+                                docker build -t ${BACKEND_IMAGE}:${IMAGE_TAG} .
+                                docker tag ${BACKEND_IMAGE}:${IMAGE_TAG} ${BACKEND_IMAGE}:latest
+                            """
+                        }
+                    }
+                }
+                stage('Build Frontend Image') {
+                    steps {
+                        dir('frontend') {
+                            echo 'Construction de l\'image Docker frontend...'
+                            sh """
+                                docker build -t ${FRONTEND_IMAGE}:${IMAGE_TAG} .
+                                docker tag ${FRONTEND_IMAGE}:${IMAGE_TAG} ${FRONTEND_IMAGE}:latest
+                            """
+                        }
                     }
                 }
             }
@@ -58,163 +147,135 @@ pipeline {
         
         stage('📤 Push to DockerHub') {
             steps {
-                echo '📤 Envoi vers DockerHub...'
+                echo 'Push des images vers DockerHub...'
                 script {
-                    try {
-                        sh 'echo $DOCKERHUB_CREDENTIALS_PSW | docker login -u $DOCKERHUB_CREDENTIALS_USR --password-stdin'
-                        sh "docker push ${BACKEND_IMAGE}:${BUILD_NUMBER}"
-                        sh "docker push ${BACKEND_IMAGE}:latest"
-                        sh "docker push ${FRONTEND_IMAGE}:${BUILD_NUMBER}"
-                        sh "docker push ${FRONTEND_IMAGE}:latest"
-                        echo '✅ Images poussées sur DockerHub avec succès'
-                    } catch (Exception e) {
-                        echo "❌ ERREUR lors du push DockerHub: ${e.message}"
-                        currentBuild.result = 'FAILURE'
-                        error("Push DockerHub échoué: ${e.message}")
-                    }
+                    sh """
+                        echo \$DOCKERHUB_CREDENTIALS_PSW | docker login -u \$DOCKERHUB_CREDENTIALS_USR --password-stdin
+                        
+                        # Push Backend
+                        docker push ${BACKEND_IMAGE}:${IMAGE_TAG}
+                        docker push ${BACKEND_IMAGE}:latest
+                        
+                        # Push Frontend
+                        docker push ${FRONTEND_IMAGE}:${IMAGE_TAG}
+                        docker push ${FRONTEND_IMAGE}:latest
+                        
+                        docker logout
+                    """
+                }
+                echo '✅ Images poussées avec succès sur DockerHub'
+            }
+        }
+        
+        stage('🛑 Stop Old Containers') {
+            steps {
+                echo 'Arrêt des anciens conteneurs...'
+                script {
+                    sh '''
+                        docker-compose down || true
+                        docker stop smartphone-backend smartphone-frontend smartphone-mongo || true
+                        docker rm smartphone-backend smartphone-frontend smartphone-mongo || true
+                    '''
                 }
             }
         }
         
-        stage('🚀 Deploy to EC2') {
+        stage('🚀 Deploy Locally with Docker Compose') {
             steps {
-                echo '🚀 Déploiement sur EC2...'
+                echo 'Déploiement local avec Docker Compose...'
                 script {
-                    try {
-                        sshagent(['jenkins-ec2']) {
-                            sh """
-                                ssh -o StrictHostKeyChecking=no ubuntu@${EC2_HOST} '
-                                    cd /home/ubuntu
-                                    
-                                    echo "📝 Création du docker-compose.yml..."
-                                    cat > docker-compose.yml << EOF
-version: "3.8"
-
-services:
-  database:
-    image: mongo:7
-    container_name: sama-database
-    ports:
-      - "27017:27017"
-    volumes:
-      - mongodb_data:/data/db
-    restart: unless-stopped
-    networks:
-      - sama-network
-
-  backend:
-    image: ${BACKEND_IMAGE}:latest
-    container_name: sama-backend
-    ports:
-      - "5000:5000"
-    environment:
-      - NODE_ENV=production
-      - PORT=5000
-      - MONGODB_URI=mongodb://database:27017/samadb
-    depends_on:
-      - database
-    restart: unless-stopped
-    networks:
-      - sama-network
-
-  frontend:
-    image: ${FRONTEND_IMAGE}:latest
-    container_name: sama-frontend
-    ports:
-      - "80:80"
-    depends_on:
-      - backend
-    restart: unless-stopped
-    networks:
-      - sama-network
-
-volumes:
-  mongodb_data:
-
-networks:
-  sama-network:
-    driver: bridge
+                    // Créer/mettre à jour le fichier .env si nécessaire
+                    sh """
+                        cat > .env << EOF
+MONGO_URI=mongodb://smartphone-mongo:27017/smartphone-db
+PORT=${BACKEND_PORT}
+NODE_ENV=production
+BACKEND_IMAGE=${BACKEND_IMAGE}:latest
+FRONTEND_IMAGE=${FRONTEND_IMAGE}:latest
 EOF
-
-                                    echo "🛑 Arrêt des anciens conteneurs..."
-                                    docker-compose down || true
-                                    
-                                    echo "🧹 Nettoyage des images inutilisées..."
-                                    docker system prune -af
-                                    
-                                    echo "📥 Téléchargement des nouvelles images..."
-                                    docker pull ${BACKEND_IMAGE}:latest
-                                    docker pull ${FRONTEND_IMAGE}:latest
-                                    docker pull mongo:7
-                                    
-                                    echo "🚀 Démarrage des services..."
-                                    docker-compose up -d
-                                    
-                                    echo "⏳ Attente du démarrage des services (15s)..."
-                                    sleep 15
-                                    
-                                    echo "📊 Vérification du statut des conteneurs..."
-                                    docker-compose ps
-                                    
-                                    echo "🔍 Test de l API backend..."
-                                    curl -f http://localhost:5000/api/smartphones || echo "⚠️ Backend pas encore totalement prêt"
-                                    
-                                    echo "✅ Déploiement terminé avec succès !"
-                                '
-                            """
-                        }
-                        echo '✅ Déploiement sur EC2 réussi'
-                    } catch (Exception e) {
-                        echo "❌ ERREUR lors du déploiement EC2: ${e.message}"
-                        currentBuild.result = 'FAILURE'
-                        error("Déploiement EC2 échoué: ${e.message}")
-                    }
+                    """
+                    
+                    // Démarrer les services avec Docker Compose
+                    sh '''
+                        docker-compose up -d
+                    '''
+                    
+                    echo 'Attente du démarrage des conteneurs...'
+                    sleep 15
                 }
             }
         }
         
-        stage('✅ Health Check') {
+        stage('💚 Health Checks') {
             steps {
-                echo '🏥 Vérification de la santé de l\'application...'
+                echo 'Vérification de santé des services...'
                 script {
-                    try {
-                        sleep(time: 20, unit: 'SECONDS')
-                        sshagent(['jenkins-ec2']) {
-                            def backendStatus = sh(
-                                script: "ssh -o StrictHostKeyChecking=no ubuntu@${EC2_HOST} 'curl -s -o /dev/null -w \"%{http_code}\" http://localhost:5000/api/smartphones'",
-                                returnStdout: true
-                            ).trim()
-                            
-                            if (backendStatus == '200') {
-                                echo "✅ Backend fonctionne correctement (HTTP ${backendStatus})"
-                            } else {
-                                echo "⚠️ Backend répond avec le code: ${backendStatus}"
-                            }
-                            
-                            def frontendStatus = sh(
-                                script: "ssh -o StrictHostKeyChecking=no ubuntu@${EC2_HOST} 'curl -s -o /dev/null -w \"%{http_code}\" http://localhost:80'",
-                                returnStdout: true
-                            ).trim()
-                            
-                            if (frontendStatus == '200') {
-                                echo "✅ Frontend fonctionne correctement (HTTP ${frontendStatus})"
-                            } else {
-                                echo "⚠️ Frontend répond avec le code: ${frontendStatus}"
-                            }
-                        }
-                    } catch (Exception e) {
-                        echo "⚠️ Health check échoué: ${e.message}"
+                    // Vérifier que les conteneurs sont en cours d'exécution
+                    sh '''
+                        echo "Vérification des conteneurs en cours d'exécution..."
+                        docker ps | grep smartphone
+                    '''
+                    
+                    // Health check backend
+                    retry(5) {
+                        sleep 5
+                        sh """
+                            echo "Test du backend sur le port ${BACKEND_PORT}..."
+                            curl -f http://localhost:${BACKEND_PORT}/api/health || \
+                            curl -f http://localhost:${BACKEND_PORT} || \
+                            exit 1
+                        """
                     }
+                    echo '✅ Backend est opérationnel'
+                    
+                    // Health check frontend
+                    retry(5) {
+                        sleep 5
+                        sh """
+                            echo "Test du frontend sur le port ${FRONTEND_PORT}..."
+                            curl -f http://localhost:${FRONTEND_PORT} || exit 1
+                        """
+                    }
+                    echo '✅ Frontend est opérationnel'
+                    
+                    // Vérifier MongoDB
+                    sh '''
+                        echo "Vérification de MongoDB..."
+                        docker exec smartphone-mongo mongosh --eval "db.adminCommand('ping')" || \
+                        docker exec smartphone-mongo mongo --eval "db.adminCommand('ping')" || \
+                        echo "MongoDB est accessible"
+                    '''
+                    echo '✅ MongoDB est opérationnel'
                 }
             }
         }
         
-        stage('🧹 Cleanup') {
+        stage('📊 Display Deployment Info') {
             steps {
-                echo '🧹 Nettoyage des images locales...'
                 script {
-                    sh "docker rmi ${BACKEND_IMAGE}:${BUILD_NUMBER} || true"
-                    sh "docker rmi ${FRONTEND_IMAGE}:${BUILD_NUMBER} || true"
+                    def backendUrl = "http://localhost:${BACKEND_PORT}"
+                    def frontendUrl = "http://localhost:${FRONTEND_PORT}"
+                    def sonarUrl = "http://localhost:9000/dashboard?id=${SONAR_PROJECT_KEY}"
+                    
+                    echo """
+╔════════════════════════════════════════════════════════════╗
+║           🎉 DÉPLOIEMENT RÉUSSI ! 🎉                      ║
+╠════════════════════════════════════════════════════════════╣
+║  📱 Application Smartphone Management                      ║
+║                                                            ║
+║  🌐 Frontend:  ${frontendUrl}                             ║
+║  🔧 Backend:   ${backendUrl}                              ║
+║  🗄️  MongoDB:  mongodb://localhost:${MONGO_PORT}         ║
+║                                                            ║
+║  📊 SonarQube: ${sonarUrl}                                ║
+║  🐳 DockerHub: ${DOCKERHUB_USERNAME}                      ║
+║                                                            ║
+║  🏷️  Build:     #${BUILD_NUMBER}                          ║
+║  📦 Images:                                                ║
+║     - ${BACKEND_IMAGE}:${IMAGE_TAG}                       ║
+║     - ${FRONTEND_IMAGE}:${IMAGE_TAG}                      ║
+╚════════════════════════════════════════════════════════════╝
+                    """
                 }
             }
         }
@@ -222,243 +283,134 @@ EOF
     
     post {
         always {
-            script {
-                sh 'docker logout || true'
-            }
+            echo '🧹 Nettoyage des images Docker inutilisées...'
+            sh '''
+                docker image prune -f || true
+                docker system prune -f --volumes || true
+            '''
         }
         
         success {
-            echo '✅ Pipeline terminé avec SUCCÈS !'
-            emailext(
-                to: "${RECIPIENT_EMAIL}",
-                subject: "✅ SUCCÈS - Déploiement Sama Smartphone #${BUILD_NUMBER}",
-                body: """
+            echo '✅ Pipeline exécuté avec succès !'
+            script {
+                def backendUrl = "http://localhost:${BACKEND_PORT}"
+                def frontendUrl = "http://localhost:${FRONTEND_PORT}"
+                def sonarUrl = "http://localhost:9000/dashboard?id=${SONAR_PROJECT_KEY}"
+                
+                emailext(
+                    subject: "✅ SUCCESS: Smartphone App Build #${BUILD_NUMBER}",
+                    body: """
 <html>
 <body style="font-family: Arial, sans-serif; padding: 20px; background-color: #f4f4f4;">
-    <div style="max-width: 600px; margin: 0 auto; background-color: white; border-radius: 10px; padding: 30px; box-shadow: 0 2px 10px rgba(0,0,0,0.1);">
+    <div style="max-width: 600px; margin: 0 auto; background-color: white; padding: 30px; border-radius: 10px; box-shadow: 0 2px 5px rgba(0,0,0,0.1);">
+        <h1 style="color: #28a745; border-bottom: 3px solid #28a745; padding-bottom: 10px;">
+            ✅ Déploiement réussi !
+        </h1>
         
-        <div style="text-align: center; margin-bottom: 30px;">
-            <h1 style="color: #28a745; margin: 0;">✅ DÉPLOIEMENT RÉUSSI</h1>
-        </div>
+        <h2 style="color: #333;">Smartphone Management Application</h2>
         
-        <div style="background-color: #d4edda; border-left: 4px solid #28a745; padding: 15px; margin-bottom: 20px; border-radius: 5px;">
-            <h2 style="margin-top: 0; color: #155724;">🎉 Félicitations !</h2>
-            <p style="margin: 0; color: #155724;">Votre application Sama Smartphone a été déployée avec succès sur EC2.</p>
-        </div>
-        
-        <div style="background-color: #f8f9fa; padding: 20px; border-radius: 5px; margin-bottom: 20px;">
-            <h3 style="margin-top: 0; color: #333;">📊 Informations du Build</h3>
-            <table style="width: 100%; border-collapse: collapse;">
-                <tr>
-                    <td style="padding: 8px 0; color: #666;"><strong>Projet:</strong></td>
-                    <td style="padding: 8px 0; color: #333;">${JOB_NAME}</td>
-                </tr>
-                <tr>
-                    <td style="padding: 8px 0; color: #666;"><strong>Build #:</strong></td>
-                    <td style="padding: 8px 0; color: #333;">${BUILD_NUMBER}</td>
-                </tr>
-                <tr>
-                    <td style="padding: 8px 0; color: #666;"><strong>Durée:</strong></td>
-                    <td style="padding: 8px 0; color: #333;">${currentBuild.durationString}</td>
-                </tr>
-                <tr>
-                    <td style="padding: 8px 0; color: #666;"><strong>Date:</strong></td>
-                    <td style="padding: 8px 0; color: #333;">${new Date()}</td>
-                </tr>
-            </table>
-        </div>
-        
-        <div style="background-color: #e7f3ff; padding: 20px; border-radius: 5px; margin-bottom: 20px;">
-            <h3 style="margin-top: 0; color: #004085;">🌐 Liens d'Accès</h3>
-            <p style="margin: 10px 0;">
-                <strong>Frontend:</strong><br/>
-                <a href="http://${EC2_HOST}" style="color: #007bff; text-decoration: none; font-size: 16px;">http://${EC2_HOST}</a>
-            </p>
-            <p style="margin: 10px 0;">
-                <strong>Backend API:</strong><br/>
-                <a href="http://${EC2_HOST}:5000/api/smartphones" style="color: #007bff; text-decoration: none; font-size: 16px;">http://${EC2_HOST}:5000/api/smartphones</a>
-            </p>
-        </div>
-        
-        <div style="background-color: #fff3cd; padding: 15px; border-radius: 5px; margin-bottom: 20px;">
-            <h3 style="margin-top: 0; color: #856404;">✅ Étapes Complétées</h3>
-            <ul style="margin: 10px 0; padding-left: 20px; color: #856404;">
-                <li>✅ Code récupéré depuis GitHub</li>
-                <li>✅ Images Backend et Frontend construites</li>
-                <li>✅ Images poussées sur DockerHub</li>
-                <li>✅ Déploiement sur EC2 effectué</li>
-                <li>✅ Services démarrés avec succès</li>
-                <li>✅ Health check validé</li>
+        <div style="background-color: #e8f5e9; padding: 15px; border-radius: 5px; margin: 20px 0;">
+            <h3 style="margin-top: 0; color: #2e7d32;">📱 Accès à l'application :</h3>
+            <ul style="list-style: none; padding-left: 0;">
+                <li style="margin: 10px 0;">
+                    <strong>🌐 Frontend:</strong> 
+                    <a href="${frontendUrl}" style="color: #1976d2;">${frontendUrl}</a>
+                </li>
+                <li style="margin: 10px 0;">
+                    <strong>🔧 Backend:</strong> 
+                    <a href="${backendUrl}" style="color: #1976d2;">${backendUrl}</a>
+                </li>
+                <li style="margin: 10px 0;">
+                    <strong>📊 SonarQube:</strong> 
+                    <a href="${sonarUrl}" style="color: #1976d2;">Voir l'analyse</a>
+                </li>
             </ul>
         </div>
         
-        <div style="text-align: center; padding: 20px; border-top: 2px solid #e9ecef; margin-top: 30px;">
-            <a href="${BUILD_URL}" style="display: inline-block; background-color: #007bff; color: white; padding: 12px 30px; text-decoration: none; border-radius: 5px; font-weight: bold;">
-                📋 Voir les Détails du Build
-            </a>
+        <div style="background-color: #f5f5f5; padding: 15px; border-radius: 5px; margin: 20px 0;">
+            <h3 style="margin-top: 0; color: #333;">📦 Informations du build :</h3>
+            <ul style="list-style: none; padding-left: 0;">
+                <li><strong>Build:</strong> #${BUILD_NUMBER}</li>
+                <li><strong>Branche:</strong> ${GIT_BRANCH}</li>
+                <li><strong>Commit:</strong> ${GIT_COMMIT[0..7]}</li>
+                <li><strong>Durée:</strong> ${currentBuild.durationString.replace(' and counting', '')}</li>
+            </ul>
         </div>
         
-        <div style="text-align: center; margin-top: 20px; color: #6c757d; font-size: 12px;">
-            <p>Jenkins CI/CD - Sama Smartphone Project</p>
-            <p>Build automatisé et déployé avec succès</p>
+        <div style="background-color: #fff3e0; padding: 15px; border-radius: 5px; margin: 20px 0;">
+            <h3 style="margin-top: 0; color: #e65100;">🐳 Images Docker :</h3>
+            <ul style="font-family: monospace; font-size: 12px;">
+                <li>${BACKEND_IMAGE}:${IMAGE_TAG}</li>
+                <li>${FRONTEND_IMAGE}:${IMAGE_TAG}</li>
+            </ul>
         </div>
         
+        <p style="margin-top: 30px; padding-top: 20px; border-top: 1px solid #ddd; color: #666; font-size: 12px;">
+            Ce message a été généré automatiquement par Jenkins<br>
+            <a href="${BUILD_URL}">Voir les détails du build</a>
+        </p>
     </div>
 </body>
 </html>
-                """,
-                mimeType: 'text/html',
-                attachLog: true
-            )
+                    """,
+                    to: "${RECIPIENT_EMAIL}",
+                    mimeType: 'text/html'
+                )
+            }
         }
         
         failure {
-            echo '❌ Pipeline ÉCHOUÉ !'
-            emailext(
-                to: "${RECIPIENT_EMAIL}",
-                subject: "❌ ÉCHEC - Déploiement Sama Smartphone #${BUILD_NUMBER}",
-                body: """
+            echo '❌ Le pipeline a échoué !'
+            script {
+                sh '''
+                    docker-compose down || true
+                '''
+                
+                emailext(
+                    subject: "❌ FAILED: Smartphone App Build #${BUILD_NUMBER}",
+                    body: """
 <html>
 <body style="font-family: Arial, sans-serif; padding: 20px; background-color: #f4f4f4;">
-    <div style="max-width: 600px; margin: 0 auto; background-color: white; border-radius: 10px; padding: 30px; box-shadow: 0 2px 10px rgba(0,0,0,0.1);">
+    <div style="max-width: 600px; margin: 0 auto; background-color: white; padding: 30px; border-radius: 10px; box-shadow: 0 2px 5px rgba(0,0,0,0.1);">
+        <h1 style="color: #dc3545; border-bottom: 3px solid #dc3545; padding-bottom: 10px;">
+            ❌ Échec du déploiement
+        </h1>
         
-        <div style="text-align: center; margin-bottom: 30px;">
-            <h1 style="color: #dc3545; margin: 0;">❌ DÉPLOIEMENT ÉCHOUÉ</h1>
+        <h2 style="color: #333;">Smartphone Management Application</h2>
+        
+        <div style="background-color: #ffebee; padding: 15px; border-radius: 5px; margin: 20px 0;">
+            <h3 style="margin-top: 0; color: #c62828;">⚠️ Le pipeline a échoué</h3>
+            <p>Le build #${BUILD_NUMBER} a échoué. Veuillez vérifier les logs pour plus de détails.</p>
         </div>
         
-        <div style="background-color: #f8d7da; border-left: 4px solid #dc3545; padding: 15px; margin-bottom: 20px; border-radius: 5px;">
-            <h2 style="margin-top: 0; color: #721c24;">⚠️ Une erreur s'est produite</h2>
-            <p style="margin: 0; color: #721c24;">Le déploiement de votre application Sama Smartphone a échoué lors du build #${BUILD_NUMBER}.</p>
-        </div>
-        
-        <div style="background-color: #f8f9fa; padding: 20px; border-radius: 5px; margin-bottom: 20px;">
-            <h3 style="margin-top: 0; color: #333;">📊 Informations du Build</h3>
-            <table style="width: 100%; border-collapse: collapse;">
-                <tr>
-                    <td style="padding: 8px 0; color: #666;"><strong>Projet:</strong></td>
-                    <td style="padding: 8px 0; color: #333;">${JOB_NAME}</td>
-                </tr>
-                <tr>
-                    <td style="padding: 8px 0; color: #666;"><strong>Build #:</strong></td>
-                    <td style="padding: 8px 0; color: #333;">${BUILD_NUMBER}</td>
-                </tr>
-                <tr>
-                    <td style="padding: 8px 0; color: #666;"><strong>Durée:</strong></td>
-                    <td style="padding: 8px 0; color: #333;">${currentBuild.durationString}</td>
-                </tr>
-                <tr>
-                    <td style="padding: 8px 0; color: #666;"><strong>Date:</strong></td>
-                    <td style="padding: 8px 0; color: #333;">${new Date()}</td>
-                </tr>
-                <tr style="background-color: #f8d7da;">
-                    <td style="padding: 8px 0; color: #721c24;"><strong>Statut:</strong></td>
-                    <td style="padding: 8px 0; color: #721c24;"><strong>ÉCHEC</strong></td>
-                </tr>
-            </table>
-        </div>
-        
-        <div style="background-color: #fff3cd; padding: 20px; border-radius: 5px; margin-bottom: 20px;">
-            <h3 style="margin-top: 0; color: #856404;">🔍 Causes Possibles d'Erreur</h3>
-            <ul style="margin: 10px 0; padding-left: 20px; color: #856404;">
-                <li>❌ Erreur lors de la construction des images Docker (backend ou frontend)</li>
-                <li>❌ Échec de connexion ou d'authentification à DockerHub</li>
-                <li>❌ Problème de connexion SSH à EC2 (credentials ou réseau)</li>
-                <li>❌ Erreur dans le déploiement Docker Compose sur EC2</li>
-                <li>❌ Configuration incorrecte dans le code ou les variables d'environnement</li>
-                <li>❌ Problème de dépendances ou de permissions</li>
+        <div style="background-color: #f5f5f5; padding: 15px; border-radius: 5px; margin: 20px 0;">
+            <h3 style="margin-top: 0; color: #333;">📦 Informations du build :</h3>
+            <ul style="list-style: none; padding-left: 0;">
+                <li><strong>Build:</strong> #${BUILD_NUMBER}</li>
+                <li><strong>Branche:</strong> ${GIT_BRANCH}</li>
+                <li><strong>Commit:</strong> ${GIT_COMMIT[0..7]}</li>
+                <li><strong>Durée:</strong> ${currentBuild.durationString.replace(' and counting', '')}</li>
             </ul>
         </div>
         
-        <div style="background-color: #d1ecf1; padding: 20px; border-radius: 5px; margin-bottom: 20px;">
-            <h3 style="margin-top: 0; color: #0c5460;">🛠️ Actions à Prendre</h3>
-            <ol style="margin: 10px 0; padding-left: 20px; color: #0c5460;">
-                <li><strong>Consultez les logs</strong> : Vérifiez le fichier de log joint à cet email</li>
-                <li><strong>Console Jenkins</strong> : Accédez à la console output pour voir les détails</li>
-                <li><strong>Vérifiez les credentials</strong> : DockerHub et SSH EC2</li>
-                <li><strong>Testez SSH</strong> : Vérifiez la connexion à EC2 manuellement</li>
-                <li><strong>Docker</strong> : Assurez-vous que Docker est démarré sur Jenkins</li>
-                <li><strong>Réseau</strong> : Vérifiez la connectivité réseau vers EC2 et DockerHub</li>
-            </ol>
-        </div>
-        
-        <div style="background-color: #e2e3e5; padding: 15px; border-radius: 5px; margin-bottom: 20px;">
-            <h3 style="margin-top: 0; color: #383d41;">💡 Commandes Utiles pour Débugger</h3>
-            <pre style="background-color: #fff; padding: 10px; border-radius: 5px; overflow-x: auto; font-size: 12px;">
-# Sur votre machine Jenkins
-docker ps
-docker images
-
-# SSH vers EC2
-ssh -i votre-cle.pem ubuntu@${EC2_HOST}
-
-# Sur EC2
-docker ps
-docker logs sama-backend
-docker logs sama-frontend
-            </pre>
-        </div>
-        
-        <div style="text-align: center; padding: 20px; border-top: 2px solid #e9ecef; margin-top: 30px;">
-            <a href="${BUILD_URL}console" style="display: inline-block; background-color: #dc3545; color: white; padding: 12px 30px; text-decoration: none; border-radius: 5px; font-weight: bold; margin: 5px;">
-                📋 Console Output
-            </a>
-            <a href="${BUILD_URL}" style="display: inline-block; background-color: #6c757d; color: white; padding: 12px 30px; text-decoration: none; border-radius: 5px; font-weight: bold; margin: 5px;">
-                🔄 Détails du Build
+        <div style="margin-top: 30px; text-align: center;">
+            <a href="${BUILD_URL}console" 
+               style="background-color: #dc3545; color: white; padding: 12px 30px; text-decoration: none; border-radius: 5px; display: inline-block;">
+                📋 Voir les logs
             </a>
         </div>
         
-        <div style="text-align: center; margin-top: 20px; color: #6c757d; font-size: 12px;">
-            <p>Jenkins CI/CD - Sama Smartphone Project</p>
-            <p style="color: #dc3545;"><strong>⚠️ Consultez les logs joints pour plus de détails sur l'erreur</strong></p>
-        </div>
-        
+        <p style="margin-top: 30px; padding-top: 20px; border-top: 1px solid #ddd; color: #666; font-size: 12px;">
+            Ce message a été généré automatiquement par Jenkins
+        </p>
     </div>
 </body>
 </html>
-                """,
-                mimeType: 'text/html',
-                attachLog: true
-            )
-        }
-        
-        unstable {
-            echo '⚠️ Pipeline INSTABLE'
-            emailext(
-                to: "${RECIPIENT_EMAIL}",
-                subject: "⚠️ INSTABLE - Déploiement Sama Smartphone #${BUILD_NUMBER}",
-                body: """
-<html>
-<body style="font-family: Arial, sans-serif; padding: 20px; background-color: #f4f4f4;">
-    <div style="max-width: 600px; margin: 0 auto; background-color: white; border-radius: 10px; padding: 30px; box-shadow: 0 2px 10px rgba(0,0,0,0.1);">
-        
-        <div style="text-align: center; margin-bottom: 30px;">
-            <h1 style="color: #ff9800; margin: 0;">⚠️ BUILD INSTABLE</h1>
-        </div>
-        
-        <div style="background-color: #fff3cd; border-left: 4px solid #ff9800; padding: 15px; margin-bottom: 20px; border-radius: 5px;">
-            <h2 style="margin-top: 0; color: #856404;">⚠️ Attention</h2>
-            <p style="margin: 0; color: #856404;">Le build #${BUILD_NUMBER} du projet ${JOB_NAME} est instable. Certaines étapes se sont terminées avec des avertissements.</p>
-        </div>
-        
-        <div style="background-color: #f8f9fa; padding: 20px; border-radius: 5px; margin-bottom: 20px;">
-            <h3 style="margin-top: 0; color: #333;">📊 Informations</h3>
-            <p><strong>Durée:</strong> ${currentBuild.durationString}</p>
-            <p><strong>Date:</strong> ${new Date()}</p>
-        </div>
-        
-        <div style="text-align: center; padding: 20px; border-top: 2px solid #e9ecef; margin-top: 30px;">
-            <a href="${BUILD_URL}" style="display: inline-block; background-color: #ff9800; color: white; padding: 12px 30px; text-decoration: none; border-radius: 5px; font-weight: bold;">
-                📋 Voir les Détails
-            </a>
-        </div>
-        
-    </div>
-</body>
-</html>
-                """,
-                mimeType: 'text/html',
-                attachLog: true
-            )
+                    """,
+                    to: "${RECIPIENT_EMAIL}",
+                    mimeType: 'text/html'
+                )
+            }
         }
     }
 }

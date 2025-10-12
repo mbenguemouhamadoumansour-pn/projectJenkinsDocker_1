@@ -1,0 +1,76 @@
+version: '3.8'
+
+services:
+  # Service Jenkins pour CI/CD
+  jenkins:
+    build:
+      context: .
+      dockerfile: Dockerfile.jenkins
+    container_name: sama-jenkins
+    privileged: true
+    user: root
+    ports:
+      - "8080:8080"
+      - "50000:50000"
+    volumes:
+      - jenkins_home:/var/jenkins_home
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - sama-network
+    restart: unless-stopped
+
+  # Service Frontend (React)
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: sama-frontend
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
+    networks:
+      - sama-network
+    restart: unless-stopped
+
+  # Service Backend (Node.js/Express)
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: sama-backend
+    ports:
+      - "5000:5000"
+    environment:
+      NODE_ENV: production
+      MONGODB_URI: mongodb://database:27017/samadb
+      PORT: 5000
+    depends_on:
+      database:
+        condition: service_started
+    networks:
+      - sama-network
+    restart: unless-stopped
+
+  # Service Base de données (MongoDB)
+  database:
+    image: mongo:latest
+    container_name: sama-database
+    ports:
+      - "27017:27017"
+    volumes:
+      - db-data:/data/db
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: admin
+      MONGO_INITDB_ROOT_PASSWORD: password123
+    networks:
+      - sama-network
+    restart: unless-stopped
+
+networks:
+  sama-network:
+    driver: bridge
+
+volumes:
+  jenkins_home:
+  db-data:
