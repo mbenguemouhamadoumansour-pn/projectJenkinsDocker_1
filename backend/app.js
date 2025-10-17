@@ -18,6 +18,15 @@ app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+// ✅ ENDPOINT HEALTH CHECK (pour Kubernetes)
+app.get('/api/health', (req, res) => {
+  res.status(200).json({
+    status: 'ok',
+    message: 'Backend is healthy',
+    timestamp: new Date().toISOString()
+  });
+});
+
 // Routes
 app.use('/api/smartphones', smartphoneRoutes);
 
@@ -26,6 +35,7 @@ app.get('/', (req, res) => {
   res.json({
     message: 'API Gestion Smartphones - Bienvenue !',
     endpoints: {
+      'GET /api/health': 'Vérifier la santé du service',
       'GET /api/smartphones': 'Récupérer tous les smartphones',
       'GET /api/smartphones/:id': 'Récupérer un smartphone par ID',
       'POST /api/smartphones': 'Ajouter un smartphone',

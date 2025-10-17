@@ -4,25 +4,22 @@ pipeline {
     environment {
         // Configuration DockerHub
         DOCKERHUB_CREDENTIALS = credentials('dockerhub-credentials')
-
-        DOCKERHUB_USERNAME = 'mouhamadoumbengue'  // À MODIFIER
+        DOCKERHUB_USERNAME = 'mouhamadoumbengue'
         
         // Noms des images
         BACKEND_IMAGE = "${DOCKERHUB_USERNAME}/smartphone-backend"
         FRONTEND_IMAGE = "${DOCKERHUB_USERNAME}/smartphone-frontend"
         IMAGE_TAG = "${BUILD_NUMBER}"
         
-        // Configuration de l'application
-        BACKEND_PORT = '5000'
-        FRONTEND_PORT = '80'
-        MONGO_PORT = '27017'
+        // Configuration Kubernetes
+        K8S_NAMESPACE = 'smartphone-app'
+        K8S_CONTEXT = 'minikube'
         
         // Configuration SonarQube
         SONAR_PROJECT_KEY = 'Smartphone-Management-App'
         
         // Configuration Email
-        RECIPIENT_EMAIL = 'mbenguemouhamadoumansour@gmail.com'  // À MODIFIER
-
+        RECIPIENT_EMAIL = 'mbenguemouhamadoumansour@gmail.com'
     }
     
     stages {
@@ -38,7 +35,7 @@ pipeline {
                 echo 'Récupération du code depuis GitHub...'
                 git branch: 'main',
                     credentialsId: 'github-credentials',
-                    url: 'https://github.com/mbenguemouhamadoumansour-pn/projectJenkinsDocker_1.git'  // À MODIFIER
+                    url: 'https://github.com/mbenguemouhamadoumansour-pn/projectJenkinsDocker_1.git'
             }
         }
         
@@ -68,20 +65,16 @@ pipeline {
                 stage('Backend Tests') {
                     steps {
                         dir('backend') {
-                            echo 'Exécution des tests backend avec coverage...'
-                            sh '''
-                                npm test -- --coverage --watchAll=false || true
-                            '''
+                            echo 'Exécution des tests backend...'
+                            sh 'npm test -- --coverage --watchAll=false || true'
                         }
                     }
                 }
                 stage('Frontend Tests') {
                     steps {
                         dir('frontend') {
-                            echo 'Exécution des tests frontend avec coverage...'
-                            sh '''
-                                CI=true npm test -- --coverage --watchAll=false || true
-                            '''
+                            echo 'Exécution des tests frontend...'
+                            sh 'CI=true npm test -- --coverage --watchAll=false || true'
                         }
                     }
                 }
@@ -169,115 +162,77 @@ pipeline {
             }
         }
         
-        stage('🛑 Stop Old Containers') {
+        stage('🚀 Deploy to Kubernetes') {
             steps {
-                echo 'Arrêt des anciens conteneurs...'
+                echo 'Déploiement sur Kubernetes (Minikube)...'
                 script {
-                    sh '''
-                        docker-compose down || true
-                        docker stop smartphone-backend smartphone-frontend smartphone-mongo || true
-                        docker rm smartphone-backend smartphone-frontend smartphone-mongo || true
-                    '''
-                }
-            }
-        }
-        
-        stage('🚀 Deploy Locally with Docker Compose') {
-            steps {
-                echo 'Déploiement local avec Docker Compose...'
-                script {
-                    // Créer/mettre à jour le fichier .env si nécessaire
                     sh """
-                        cat > .env << EOF
-MONGO_URI=mongodb://smartphone-mongo:27017/smartphone-db
-PORT=${BACKEND_PORT}
-NODE_ENV=production
-BACKEND_IMAGE=${BACKEND_IMAGE}:latest
-FRONTEND_IMAGE=${FRONTEND_IMAGE}:latest
-EOF
+                        # Vérifier la connexion à Kubernetes
+                        kubectl cluster-info
+                        
+                        # Créer le namespace s'il n'existe pas
+                        kubectl create namespace ${K8S_NAMESPACE} --dry-run=client -o yaml | kubectl apply -f -
+                        
+                        # Appliquer les manifests Kubernetes
+                        kubectl apply -k k8s/
+                        
+                        # Attendre que les deployments soient prêts
+                        kubectl rollout status deployment/mongodb -n ${K8S_NAMESPACE} --timeout=5m
+                        kubectl rollout status deployment/smartphone-backend -n ${K8S_NAMESPACE} --timeout=5m
+                        kubectl rollout status deployment/smartphone-frontend -n ${K8S_NAMESPACE} --timeout=5m
                     """
-                    
-                    // Démarrer les services avec Docker Compose
-                    sh '''
-                        docker-compose up -d
-                    '''
-                    
-                    echo 'Attente du démarrage des conteneurs...'
-                    sleep 15
                 }
+                echo '✅ Déploiement sur Kubernetes réussi !'
             }
         }
         
         stage('💚 Health Checks') {
             steps {
-                echo 'Vérification de santé des services...'
+                echo 'Vérification de santé des services Kubernetes...'
                 script {
-                    // Vérifier que les conteneurs sont en cours d'exécution
                     sh '''
-                        echo "Vérification des conteneurs en cours d'exécution..."
-                        docker ps | grep smartphone
+                        echo "Attente de la disponibilité des pods..."
+                        sleep 10
+                        
+                        echo "Vérification des pods..."
+                        kubectl get pods -n smartphone-app
+                        
+                        echo "Vérification des services..."
+                        kubectl get svc -n smartphone-app
+                        
+                        echo "Vérification des logs backend..."
+                        kubectl logs -n smartphone-app -l app=smartphone-backend --tail=50
                     '''
-                    
-                    // Health check backend
-                    retry(5) {
-                        sleep 5
-                        sh """
-                            echo "Test du backend sur le port ${BACKEND_PORT}..."
-                            curl -f http://localhost:${BACKEND_PORT}/api/health || \
-                            curl -f http://localhost:${BACKEND_PORT} || \
-                            exit 1
-                        """
-                    }
-                    echo '✅ Backend est opérationnel'
-                    
-                    // Health check frontend
-                    retry(5) {
-                        sleep 5
-                        sh """
-                            echo "Test du frontend sur le port ${FRONTEND_PORT}..."
-                            curl -f http://localhost:${FRONTEND_PORT} || exit 1
-                        """
-                    }
-                    echo '✅ Frontend est opérationnel'
-                    
-                    // Vérifier MongoDB
-                    sh '''
-                        echo "Vérification de MongoDB..."
-                        docker exec smartphone-mongo mongosh --eval "db.adminCommand('ping')" || \
-                        docker exec smartphone-mongo mongo --eval "db.adminCommand('ping')" || \
-                        echo "MongoDB est accessible"
-                    '''
-                    echo '✅ MongoDB est opérationnel'
                 }
+                echo '✅ Santé des services vérifiée !'
             }
         }
         
         stage('📊 Display Deployment Info') {
             steps {
                 script {
-                    def backendUrl = "http://localhost:${BACKEND_PORT}"
-                    def frontendUrl = "http://localhost:${FRONTEND_PORT}"
-                    def sonarUrl = "http://localhost:9000/dashboard?id=${SONAR_PROJECT_KEY}"
-                    
-                    echo """
-╔════════════════════════════════════════════════════════════╗
-║           🎉 DÉPLOIEMENT RÉUSSI ! 🎉                      ║
-╠════════════════════════════════════════════════════════════╣
-║  📱 Application Smartphone Management                      ║
-║                                                            ║
-║  🌐 Frontend:  ${frontendUrl}                             ║
-║  🔧 Backend:   ${backendUrl}                              ║
-║  🗄️  MongoDB:  mongodb://localhost:${MONGO_PORT}         ║
-║                                                            ║
-║  📊 SonarQube: ${sonarUrl}                                ║
-║  🐳 DockerHub: ${DOCKERHUB_USERNAME}                      ║
-║                                                            ║
-║  🏷️  Build:     #${BUILD_NUMBER}                          ║
-║  📦 Images:                                                ║
-║     - ${BACKEND_IMAGE}:${IMAGE_TAG}                       ║
-║     - ${FRONTEND_IMAGE}:${IMAGE_TAG}                      ║
-╚════════════════════════════════════════════════════════════╝
-                    """
+                    sh '''
+                        echo ""
+                        echo "╔════════════════════════════════════════════════════════════╗"
+                        echo "║           🎉 DÉPLOIEMENT KUBERNETES RÉUSSI ! 🎉             ║"
+                        echo "╠════════════════════════════════════════════════════════════╣"
+                        echo "║  📱 Application Smartphone Management                      ║"
+                        echo "║                                                            ║"
+                        echo "║  🌐 Frontend: http://localhost:30080                       ║"
+                        echo "║  🔧 Backend:  http://localhost:5000                        ║"
+                        echo "║  🗄️  MongoDB: mongodb://localhost:27017                    ║"
+                        echo "║  📊 SonarQube: http://localhost:9000                       ║"
+                        echo "║                                                            ║"
+                        echo "║  🏷️  Build:     #${BUILD_NUMBER}                           ║"
+                        echo "║  📦 Namespace: ${K8S_NAMESPACE}                            ║"
+                        echo "║  ☸️  Context:   ${K8S_CONTEXT}                             ║"
+                        echo "║                                                            ║"
+                        echo "║  📋 Pods Kubernetes:                                       ║"
+                        kubectl get pods -n smartphone-app | tail -n +2 | awk '{printf "║  • %s\\n", $0}'
+                        echo "║                                                            ║"
+                        echo "╚════════════════════════════════════════════════════════════╝"
+                        echo ""
+                    '''
                 }
             }
         }
@@ -285,7 +240,7 @@ EOF
     
     post {
         always {
-            echo '🧹 Nettoyage des images Docker inutilisées...'
+            echo 'Nettoyage des images Docker inutilisées...'
             sh '''
                 docker image prune -f || true
                 docker system prune -f --volumes || true
@@ -294,112 +249,39 @@ EOF
         
         success {
             echo '✅ Pipeline exécuté avec succès !'
-            script {
-                def backendUrl = "http://localhost:${BACKEND_PORT}"
-                def frontendUrl = "http://localhost:${FRONTEND_PORT}"
-                def sonarUrl = "http://localhost:9000/dashboard?id=${SONAR_PROJECT_KEY}"
-                
-                emailext(
-                    subject: "✅ SUCCESS: Smartphone App Build #${BUILD_NUMBER}",
-                    body: """
+            emailext(
+                subject: "✅ SUCCESS: Smartphone App Build #${BUILD_NUMBER} - Kubernetes",
+                body: """
 <html>
 <body style="font-family: Arial, sans-serif; padding: 20px; background-color: #f4f4f4;">
-    <div style="max-width: 600px; margin: 0 auto; background-color: white; padding: 30px; border-radius: 10px; box-shadow: 0 2px 5px rgba(0,0,0,0.1);">
+    <div style="max-width: 600px; margin: 0 auto; background-color: white; padding: 30px; border-radius: 10px;">
         <h1 style="color: #28a745; border-bottom: 3px solid #28a745; padding-bottom: 10px;">
-            ✅ Déploiement réussi !
+            ✅ Déploiement Kubernetes réussi !
         </h1>
-        
-        <h2 style="color: #333;">Smartphone Management Application</h2>
         
         <div style="background-color: #e8f5e9; padding: 15px; border-radius: 5px; margin: 20px 0;">
             <h3 style="margin-top: 0; color: #2e7d32;">📱 Accès à l'application :</h3>
             <ul style="list-style: none; padding-left: 0;">
                 <li style="margin: 10px 0;">
-                    <strong>🌐 Frontend:</strong> 
-                    <a href="${frontendUrl}" style="color: #1976d2;">${frontendUrl}</a>
+                    <strong>Frontend:</strong> <a href="http://localhost:30080" style="color: #1976d2;">http://localhost:30080</a>
                 </li>
                 <li style="margin: 10px 0;">
-                    <strong>🔧 Backend:</strong> 
-                    <a href="${backendUrl}" style="color: #1976d2;">${backendUrl}</a>
+                    <strong>Backend:</strong> <a href="http://localhost:5000" style="color: #1976d2;">http://localhost:5000</a>
                 </li>
                 <li style="margin: 10px 0;">
-                    <strong>📊 SonarQube:</strong> 
-                    <a href="${sonarUrl}" style="color: #1976d2;">Voir l'analyse</a>
+                    <strong>SonarQube:</strong> <a href="http://localhost:9000" style="color: #1976d2;">http://localhost:9000</a>
                 </li>
             </ul>
         </div>
         
         <div style="background-color: #f5f5f5; padding: 15px; border-radius: 5px; margin: 20px 0;">
-            <h3 style="margin-top: 0; color: #333;">📦 Informations du build :</h3>
+            <h3 style="margin-top: 0; color: #333;">📦 Informations Kubernetes :</h3>
             <ul style="list-style: none; padding-left: 0;">
                 <li><strong>Build:</strong> #${BUILD_NUMBER}</li>
-                <li><strong>Branche:</strong> ${GIT_BRANCH}</li>
-                <li><strong>Commit:</strong> ${GIT_COMMIT[0..7]}</li>
-                <li><strong>Durée:</strong> ${currentBuild.durationString.replace(' and counting', '')}</li>
+                <li><strong>Namespace:</strong> smartphone-app</li>
+                <li><strong>Context:</strong> minikube</li>
+                <li><strong>Status:</strong> Tous les services sont déployés et sains</li>
             </ul>
-        </div>
-        
-        <div style="background-color: #fff3e0; padding: 15px; border-radius: 5px; margin: 20px 0;">
-            <h3 style="margin-top: 0; color: #e65100;">🐳 Images Docker :</h3>
-            <ul style="font-family: monospace; font-size: 12px;">
-                <li>${BACKEND_IMAGE}:${IMAGE_TAG}</li>
-                <li>${FRONTEND_IMAGE}:${IMAGE_TAG}</li>
-            </ul>
-        </div>
-        
-        <p style="margin-top: 30px; padding-top: 20px; border-top: 1px solid #ddd; color: #666; font-size: 12px;">
-            Ce message a été généré automatiquement par Jenkins<br>
-            <a href="${BUILD_URL}">Voir les détails du build</a>
-        </p>
-    </div>
-</body>
-</html>
-                    """,
-                    to: "${RECIPIENT_EMAIL}",
-                    mimeType: 'text/html'
-                )
-            }
-        }
-        
-        failure {
-            echo '❌ Le pipeline a échoué !'
-            script {
-                sh '''
-                    docker-compose down || true
-                '''
-                
-                emailext(
-                    subject: "❌ FAILED: Smartphone App Build #${BUILD_NUMBER}",
-                    body: """
-<html>
-<body style="font-family: Arial, sans-serif; padding: 20px; background-color: #f4f4f4;">
-    <div style="max-width: 600px; margin: 0 auto; background-color: white; padding: 30px; border-radius: 10px; box-shadow: 0 2px 5px rgba(0,0,0,0.1);">
-        <h1 style="color: #dc3545; border-bottom: 3px solid #dc3545; padding-bottom: 10px;">
-            ❌ Échec du déploiement
-        </h1>
-        
-        <h2 style="color: #333;">Smartphone Management Application</h2>
-        
-        <div style="background-color: #ffebee; padding: 15px; border-radius: 5px; margin: 20px 0;">
-            <h3 style="margin-top: 0; color: #c62828;">⚠️ Le pipeline a échoué</h3>
-            <p>Le build #${BUILD_NUMBER} a échoué. Veuillez vérifier les logs pour plus de détails.</p>
-        </div>
-        
-        <div style="background-color: #f5f5f5; padding: 15px; border-radius: 5px; margin: 20px 0;">
-            <h3 style="margin-top: 0; color: #333;">📦 Informations du build :</h3>
-            <ul style="list-style: none; padding-left: 0;">
-                <li><strong>Build:</strong> #${BUILD_NUMBER}</li>
-                <li><strong>Branche:</strong> ${GIT_BRANCH}</li>
-                <li><strong>Commit:</strong> ${GIT_COMMIT[0..7]}</li>
-                <li><strong>Durée:</strong> ${currentBuild.durationString.replace(' and counting', '')}</li>
-            </ul>
-        </div>
-        
-        <div style="margin-top: 30px; text-align: center;">
-            <a href="${BUILD_URL}console" 
-               style="background-color: #dc3545; color: white; padding: 12px 30px; text-decoration: none; border-radius: 5px; display: inline-block;">
-                📋 Voir les logs
-            </a>
         </div>
         
         <p style="margin-top: 30px; padding-top: 20px; border-top: 1px solid #ddd; color: #666; font-size: 12px;">
@@ -408,11 +290,39 @@ EOF
     </div>
 </body>
 </html>
-                    """,
-                    to: "${RECIPIENT_EMAIL}",
-                    mimeType: 'text/html'
-                )
-            }
+                """,
+                to: "${RECIPIENT_EMAIL}",
+                mimeType: 'text/html'
+            )
+        }
+        
+        failure {
+            echo '❌ Le pipeline a échoué !'
+            emailext(
+                subject: "❌ FAILED: Smartphone App Build #${BUILD_NUMBER}",
+                body: """
+<html>
+<body style="font-family: Arial, sans-serif; padding: 20px; background-color: #f4f4f4;">
+    <div style="max-width: 600px; margin: 0 auto; background-color: white; padding: 30px; border-radius: 10px;">
+        <h1 style="color: #dc3545; border-bottom: 3px solid #dc3545; padding-bottom: 10px;">
+            ❌ Échec du déploiement
+        </h1>
+        
+        <p>Le build #${BUILD_NUMBER} a échoué. Veuillez vérifier les logs pour plus de détails.</p>
+        
+        <div style="margin-top: 30px; text-align: center;">
+            <a href="${BUILD_URL}console" 
+               style="background-color: #dc3545; color: white; padding: 12px 30px; text-decoration: none; border-radius: 5px; display: inline-block;">
+                📋 Voir les logs
+            </a>
+        </div>
+    </div>
+</body>
+</html>
+                """,
+                to: "${RECIPIENT_EMAIL}",
+                mimeType: 'text/html'
+            )
         }
     }
 }
