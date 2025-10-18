@@ -4,7 +4,6 @@ pipeline {
     environment {
         // Configuration DockerHub - À MODIFIER
         DOCKERHUB_CREDENTIALS = credentials('dockerhub-credentials')
-
         DOCKERHUB_USERNAME = 'mouhamadoumbengue'  // À MODIFIER
         
         // Noms des images
@@ -16,12 +15,16 @@ pipeline {
         K8S_NAMESPACE = 'smartphone-app'
         K8S_CONTEXT = 'minikube'
         
+        // Configuration Ports - AJOUT IMPORTANT
+        BACKEND_PORT = '5000'
+        FRONTEND_PORT = '80'
+        MONGO_PORT = '27017'
+        
         // Configuration SonarQube
         SONAR_PROJECT_KEY = 'Smartphone-Management-App'
         
         // Configuration Email
         RECIPIENT_EMAIL = 'mbenguemouhamadoumansour@gmail.com'  // À MODIFIER
-
     }
     
     stages {
@@ -137,7 +140,9 @@ pipeline {
                         dir('frontend') {
                             echo 'Construction de l\'image Docker frontend...'
                             sh """
-                                docker build -t ${FRONTEND_IMAGE}:${IMAGE_TAG} .
+                                docker build \
+                                  --build-arg REACT_APP_API_URL=http://localhost:${BACKEND_PORT}/api \
+                                  -t ${FRONTEND_IMAGE}:${IMAGE_TAG} .
                                 docker tag ${FRONTEND_IMAGE}:${IMAGE_TAG} ${FRONTEND_IMAGE}:latest
                             """
                         }
@@ -172,24 +177,40 @@ pipeline {
             steps {
                 echo 'Déploiement sur Kubernetes (Minikube)...'
                 script {
-                    // Créer/mettre à jour le fichier .env si nécessaire
-                    sh """
-                        cat > .env << EOF
-MONGO_URI=mongodb://smartphone-mongo:27017/smartphone-db
-PORT=${BACKEND_PORT}
-NODE_ENV=production
-BACKEND_IMAGE=${BACKEND_IMAGE}:latest
-FRONTEND_IMAGE=${FRONTEND_IMAGE}:latest
-EOF
-                    """
-                    
-                    // Démarrer les services avec Docker Compose
                     sh '''
-                        docker-compose up -d
+                        # Créer le namespace
+                        kubectl create namespace ${K8S_NAMESPACE} --dry-run=client -o yaml | kubectl apply -f -
+                        
+                        # Créer les ConfigMaps
+                        kubectl delete configmap backend-config -n ${K8S_NAMESPACE} --ignore-not-found
+                        kubectl create configmap backend-config \
+                          --from-literal=MONGODB_URI=mongodb://smartphone-mongo:27017/samadb \
+                          --from-literal=PORT=${BACKEND_PORT} \
+                          --from-literal=NODE_ENV=production \
+                          -n ${K8S_NAMESPACE}
+                        
+                        # Créer les secrets Docker pour DockerHub
+                        kubectl delete secret dockerhub-secret -n ${K8S_NAMESPACE} --ignore-not-found
+                        kubectl create secret docker-registry dockerhub-secret \
+                          --docker-server=docker.io \
+                          --docker-username=${DOCKERHUB_USERNAME} \
+                          --docker-password=${DOCKERHUB_CREDENTIALS_PSW} \
+                          --docker-email=your-email@example.com \
+                          -n ${K8S_NAMESPACE}
+                        
+                        # Appliquer les manifests Kubernetes
+                        kubectl apply -f k8s/namespace.yaml
+                        kubectl apply -f k8s/mongodb-pvc.yaml -n ${K8S_NAMESPACE}
+                        kubectl apply -f k8s/mongodb-deployment.yaml -n ${K8S_NAMESPACE}
+                        kubectl apply -f k8s/backend-deployment.yaml -n ${K8S_NAMESPACE}
+                        kubectl apply -f k8s/backend-service.yaml -n ${K8S_NAMESPACE}
+                        kubectl apply -f k8s/frontend-deployment.yaml -n ${K8S_NAMESPACE}
+                        kubectl apply -f k8s/frontend-service.yaml -n ${K8S_NAMESPACE}
+                        
+                        echo "Attente du déploiement des pods..."
+                        kubectl wait --for=condition=available --timeout=300s deployment/smartphone-backend -n ${K8S_NAMESPACE} || true
+                        kubectl wait --for=condition=available --timeout=300s deployment/smartphone-frontend -n ${K8S_NAMESPACE} || true
                     '''
-                    
-                    echo 'Attente du démarrage des conteneurs...'
-                    sleep 15
                 }
             }
         }
@@ -199,40 +220,35 @@ EOF
                 echo 'Vérification de santé des services Kubernetes...'
                 script {
                     sh '''
-                        echo "Vérification des conteneurs en cours d'exécution..."
-                        docker ps | grep smartphone
-                    '''
-                    
-                    // Health check backend
-                    retry(5) {
+                        echo "État des pods..."
+                        kubectl get pods -n ${K8S_NAMESPACE}
+                        
+                        echo "État des services..."
+                        kubectl get svc -n ${K8S_NAMESPACE}
+                        
+                        echo "Attente que MongoDB soit prêt..."
+                        kubectl wait --for=condition=ready pod -l app=smartphone-mongo -n ${K8S_NAMESPACE} --timeout=300s || true
+                        sleep 10
+                        
+                        echo "Attente que le backend soit prêt..."
+                        kubectl wait --for=condition=ready pod -l app=smartphone-backend -n ${K8S_NAMESPACE} --timeout=300s || true
+                        sleep 10
+                        
+                        # Port forwarding et test
+                        kubectl port-forward -n ${K8S_NAMESPACE} svc/smartphone-backend 5000:5000 &
+                        PF_PID=$!
                         sleep 5
-                        sh """
-                            echo "Test du backend sur le port ${BACKEND_PORT}..."
-                            curl -f http://localhost:${BACKEND_PORT}/api/health || \
-                            curl -f http://localhost:${BACKEND_PORT} || \
-                            exit 1
-                        """
-                    }
-                    echo '✅ Backend est opérationnel'
-                    
-                    // Health check frontend
-                    retry(5) {
-                        sleep 5
-                        sh """
-                            echo "Test du frontend sur le port ${FRONTEND_PORT}..."
-                            curl -f http://localhost:${FRONTEND_PORT} || exit 1
-                        """
-                    }
-                    echo '✅ Frontend est opérationnel'
-                    
-                    // Vérifier MongoDB
-                    sh '''
-                        echo "Vérification de MongoDB..."
-                        docker exec smartphone-mongo mongosh --eval "db.adminCommand('ping')" || \
-                        docker exec smartphone-mongo mongo --eval "db.adminCommand('ping')" || \
-                        echo "MongoDB est accessible"
+                        
+                        retry_count=0
+                        until curl -f http://localhost:5000/api/health || [ $retry_count -ge 5 ]; do
+                            echo "Tentative de connexion au backend... ($retry_count/5)"
+                            sleep 5
+                            retry_count=$((retry_count + 1))
+                        done
+                        
+                        kill $PF_PID 2>/dev/null || true
+                        echo "✅ Backend est opérationnel"
                     '''
-                    echo '✅ MongoDB est opérationnel'
                 }
             }
         }
@@ -240,29 +256,36 @@ EOF
         stage('📊 Display Deployment Info') {
             steps {
                 script {
-                    def backendUrl = "http://localhost:${BACKEND_PORT}"
-                    def frontendUrl = "http://localhost:${FRONTEND_PORT}"
-                    def sonarUrl = "http://localhost:9000/dashboard?id=${SONAR_PROJECT_KEY}"
-                    
-                    echo """
+                    sh '''
+                        echo "
 ╔════════════════════════════════════════════════════════════╗
 ║           🎉 DÉPLOIEMENT RÉUSSI ! 🎉                      ║
 ╠════════════════════════════════════════════════════════════╣
 ║  📱 Application Smartphone Management                      ║
 ║                                                            ║
-║  🌐 Frontend:  ${frontendUrl}                             ║
-║  🔧 Backend:   ${backendUrl}                              ║
-║  🗄️  MongoDB:  mongodb://localhost:${MONGO_PORT}         ║
+║  Namespace: ${K8S_NAMESPACE}                               ║
+║  Context: ${K8S_CONTEXT}                                   ║
 ║                                                            ║
-║  📊 SonarQube: ${sonarUrl}                                ║
-║  🐳 DockerHub: ${DOCKERHUB_USERNAME}                      ║
+║  Pour accéder à l'application :                           ║
+║  1. Backend :                                              ║
+║     kubectl port-forward -n ${K8S_NAMESPACE} svc/smartphone-backend 5000:5000
+║  2. Frontend :                                             ║
+║     kubectl port-forward -n ${K8S_NAMESPACE} svc/smartphone-frontend 80:80
 ║                                                            ║
-║  🏷️  Build:     #${BUILD_NUMBER}                          ║
-║  📦 Images:                                                ║
-║     - ${BACKEND_IMAGE}:${IMAGE_TAG}                       ║
-║     - ${FRONTEND_IMAGE}:${IMAGE_TAG}                      ║
+║  Puis :                                                    ║
+║  - Frontend:  http://localhost                            ║
+║  - Backend:   http://localhost:5000                       ║
+║  - Health:    http://localhost:5000/api/health            ║
+║                                                            ║
+║  🐳 DockerHub: ${DOCKERHUB_USERNAME}                       ║
+║  🏷️  Build:     #${BUILD_NUMBER}                           ║
+║                                                            ║
+║  Images :                                                  ║
+║  - ${BACKEND_IMAGE}:${IMAGE_TAG}                          ║
+║  - ${FRONTEND_IMAGE}:${IMAGE_TAG}                         ║
 ╚════════════════════════════════════════════════════════════╝
-                    """
+                        "
+                    '''
                 }
             }
         }
@@ -270,124 +293,26 @@ EOF
     
     post {
         always {
-            echo '🧹 Nettoyage des images Docker inutilisées...'
+            echo 'Nettoyage...'
             sh '''
                 docker image prune -f || true
-                docker system prune -f --volumes || true
             '''
         }
         
         success {
             echo '✅ Pipeline exécuté avec succès !'
-            emailext(
-                subject: "✅ SUCCESS: Smartphone App Build #${BUILD_NUMBER} - Kubernetes",
-                body: """
-<html>
-<body style="font-family: Arial, sans-serif; padding: 20px; background-color: #f4f4f4;">
-    <div style="max-width: 600px; margin: 0 auto; background-color: white; padding: 30px; border-radius: 10px; box-shadow: 0 2px 5px rgba(0,0,0,0.1);">
-        <h1 style="color: #28a745; border-bottom: 3px solid #28a745; padding-bottom: 10px;">
-            ✅ Déploiement réussi !
-        </h1>
-        
-        <h2 style="color: #333;">Smartphone Management Application</h2>
-        
-        <div style="background-color: #e8f5e9; padding: 15px; border-radius: 5px; margin: 20px 0;">
-            <h3 style="margin-top: 0; color: #2e7d32;">📱 Accès à l'application :</h3>
-            <ul style="list-style: none; padding-left: 0;">
-                <li style="margin: 10px 0;">
-                    <strong>🌐 Frontend:</strong> 
-                    <a href="${frontendUrl}" style="color: #1976d2;">${frontendUrl}</a>
-                </li>
-                <li style="margin: 10px 0;">
-                    <strong>🔧 Backend:</strong> 
-                    <a href="${backendUrl}" style="color: #1976d2;">${backendUrl}</a>
-                </li>
-                <li style="margin: 10px 0;">
-                    <strong>📊 SonarQube:</strong> 
-                    <a href="${sonarUrl}" style="color: #1976d2;">Voir l'analyse</a>
-                </li>
-            </ul>
-        </div>
-        
-        <div style="background-color: #f5f5f5; padding: 15px; border-radius: 5px; margin: 20px 0;">
-            <h3 style="margin-top: 0; color: #333;">📦 Informations du build :</h3>
-            <ul style="list-style: none; padding-left: 0;">
-                <li><strong>Build:</strong> #${BUILD_NUMBER}</li>
-                <li><strong>Branche:</strong> ${GIT_BRANCH}</li>
-                <li><strong>Commit:</strong> ${GIT_COMMIT[0..7]}</li>
-                <li><strong>Durée:</strong> ${currentBuild.durationString.replace(' and counting', '')}</li>
-            </ul>
-        </div>
-        
-        <div style="background-color: #fff3e0; padding: 15px; border-radius: 5px; margin: 20px 0;">
-            <h3 style="margin-top: 0; color: #e65100;">🐳 Images Docker :</h3>
-            <ul style="font-family: monospace; font-size: 12px;">
-                <li>${BACKEND_IMAGE}:${IMAGE_TAG}</li>
-                <li>${FRONTEND_IMAGE}:${IMAGE_TAG}</li>
-            </ul>
-        </div>
-        
-        <p style="margin-top: 30px; padding-top: 20px; border-top: 1px solid #ddd; color: #666; font-size: 12px;">
-            Ce message a été généré automatiquement par Jenkins<br>
-            <a href="${BUILD_URL}">Voir les détails du build</a>
-        </p>
-    </div>
-</body>
-</html>
-                """,
-                to: "${RECIPIENT_EMAIL}",
-                mimeType: 'text/html'
-            )
         }
         
         failure {
             echo '❌ Le pipeline a échoué !'
-            script {
-                sh '''
-                    docker-compose down || true
-                '''
-                
-                emailext(
-                    subject: "❌ FAILED: Smartphone App Build #${BUILD_NUMBER}",
-                    body: """
-<html>
-<body style="font-family: Arial, sans-serif; padding: 20px; background-color: #f4f4f4;">
-    <div style="max-width: 600px; margin: 0 auto; background-color: white; padding: 30px; border-radius: 10px; box-shadow: 0 2px 5px rgba(0,0,0,0.1);">
-        <h1 style="color: #dc3545; border-bottom: 3px solid #dc3545; padding-bottom: 10px;">
-            ❌ Échec du déploiement
-        </h1>
-        
-        <h2 style="color: #333;">Smartphone Management Application</h2>
-        
-        <div style="background-color: #ffebee; padding: 15px; border-radius: 5px; margin: 20px 0;">
-            <h3 style="margin-top: 0; color: #c62828;">⚠️ Le pipeline a échoué</h3>
-            <p>Le build #${BUILD_NUMBER} a échoué. Veuillez vérifier les logs pour plus de détails.</p>
-        </div>
-        
-        <div style="background-color: #f5f5f5; padding: 15px; border-radius: 5px; margin: 20px 0;">
-            <h3 style="margin-top: 0; color: #333;">📦 Informations du build :</h3>
-            <ul style="list-style: none; padding-left: 0;">
-                <li><strong>Build:</strong> #${BUILD_NUMBER}</li>
-                <li><strong>Branche:</strong> ${GIT_BRANCH}</li>
-                <li><strong>Commit:</strong> ${GIT_COMMIT[0..7]}</li>
-                <li><strong>Durée:</strong> ${currentBuild.durationString.replace(' and counting', '')}</li>
-            </ul>
-        </div>
-        
-        <div style="margin-top: 30px; text-align: center;">
-            <a href="${BUILD_URL}console" 
-               style="background-color: #dc3545; color: white; padding: 12px 30px; text-decoration: none; border-radius: 5px; display: inline-block;">
-                📋 Voir les logs
-            </a>
-        </div>
-    </div>
-</body>
-</html>
-                    """,
-                    to: "${RECIPIENT_EMAIL}",
-                    mimeType: 'text/html'
-                )
-            }
+            sh '''
+                echo "État du namespace:"
+                kubectl describe namespace ${K8S_NAMESPACE} || true
+                echo "État des pods:"
+                kubectl get pods -n ${K8S_NAMESPACE} || true
+                echo "Logs des pods:"
+                kubectl logs -n ${K8S_NAMESPACE} -l app=smartphone-backend || true
+            '''
         }
     }
 }

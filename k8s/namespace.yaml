@@ -4,3 +4,6 @@ metadata:
   name: smartphone-app
   labels:
     name: smartphone-app
+    managed-by: jenkins
+
+---
