@@ -28,11 +28,7 @@ spec:
         - name: MONGO_INITDB_ROOT_USERNAME
           value: "admin"
         - name: MONGO_INITDB_ROOT_PASSWORD
-          valueFrom:
-            secretKeyRef:
-              name: mongodb-secret
-              key: password
-              optional: true
+          value: "password123"
         resources:
           requests:
             memory: "256Mi"
@@ -76,5 +72,3 @@ spec:
   selector:
     app: smartphone-mongo
   clusterIP: None
-
----
