@@ -140,41 +140,34 @@ pipeline {
         stage('🚀 Deploy to Kubernetes') {
             steps {
                 sh '''
-                    export KUBECONFIG=/root/.kube/config
+                    sudo kubectl create namespace ${K8S_NAMESPACE} --dry-run=client -o yaml | sudo kubectl apply -f -
                     
-                    # Créer le namespace
-                    kubectl create namespace ${K8S_NAMESPACE} --dry-run=client -o yaml | kubectl apply -f -
-                    
-                    # Créer le ConfigMap
-                    kubectl delete configmap backend-config -n ${K8S_NAMESPACE} --ignore-not-found || true
-                    kubectl create configmap backend-config \
+                    sudo kubectl delete configmap backend-config -n ${K8S_NAMESPACE} --ignore-not-found || true
+                    sudo kubectl create configmap backend-config \
                       --from-literal=MONGODB_URI=mongodb://smartphone-mongo:27017/samadb \
                       --from-literal=PORT=5000 \
                       --from-literal=NODE_ENV=production \
                       -n ${K8S_NAMESPACE}
                     
-                    # Créer le secret Docker
-                    kubectl delete secret dockerhub-secret -n ${K8S_NAMESPACE} --ignore-not-found || true
-                    kubectl create secret docker-registry dockerhub-secret \
+                    sudo kubectl delete secret dockerhub-secret -n ${K8S_NAMESPACE} --ignore-not-found || true
+                    sudo kubectl create secret docker-registry dockerhub-secret \
                       --docker-server=docker.io \
                       --docker-username=${DOCKERHUB_USERNAME} \
                       --docker-password=${DOCKERHUB_CREDENTIALS_PSW} \
                       --docker-email=jenkins@example.com \
                       -n ${K8S_NAMESPACE}
                     
-                    # Appliquer les fichiers Kubernetes
-                    kubectl apply -f k8s/namespace.yaml
-                    kubectl apply -f k8s/mongodb-pvc.yaml -n ${K8S_NAMESPACE}
-                    kubectl apply -f k8s/mongodb-deployment.yaml -n ${K8S_NAMESPACE}
-                    kubectl apply -f k8s/backend-deployment.yaml -n ${K8S_NAMESPACE}
-                    kubectl apply -f k8s/backend-service.yaml -n ${K8S_NAMESPACE}
-                    kubectl apply -f k8s/frontend-deployment.yaml -n ${K8S_NAMESPACE}
-                    kubectl apply -f k8s/frontend-service.yaml -n ${K8S_NAMESPACE}
+                    sudo kubectl apply -f k8s/namespace.yaml
+                    sudo kubectl apply -f k8s/mongodb-pvc.yaml -n ${K8S_NAMESPACE}
+                    sudo kubectl apply -f k8s/mongodb-deployment.yaml -n ${K8S_NAMESPACE}
+                    sudo kubectl apply -f k8s/backend-deployment.yaml -n ${K8S_NAMESPACE}
+                    sudo kubectl apply -f k8s/backend-service.yaml -n ${K8S_NAMESPACE}
+                    sudo kubectl apply -f k8s/frontend-deployment.yaml -n ${K8S_NAMESPACE}
+                    sudo kubectl apply -f k8s/frontend-service.yaml -n ${K8S_NAMESPACE}
                     
-                    # Attendre le déploiement
                     echo "Attente du déploiement..."
                     sleep 30
-                    kubectl get pods -n ${K8S_NAMESPACE}
+                    sudo kubectl get pods -n ${K8S_NAMESPACE}
                 '''
             }
         }
@@ -182,21 +175,19 @@ pipeline {
         stage('✅ Verification') {
             steps {
                 sh '''
-                    export KUBECONFIG=/root/.kube/config
-                    
                     echo "=== État des Pods ==="
-                    kubectl get pods -n ${K8S_NAMESPACE}
+                    sudo kubectl get pods -n ${K8S_NAMESPACE}
                     
                     echo ""
                     echo "=== État des Services ==="
-                    kubectl get svc -n ${K8S_NAMESPACE}
+                    sudo kubectl get svc -n ${K8S_NAMESPACE}
                     
                     echo ""
                     echo "✅ Déploiement réussi!"
                     echo ""
                     echo "Pour accéder à l'application:"
-                    echo "kubectl port-forward -n ${K8S_NAMESPACE} svc/smartphone-backend 5000:5000"
-                    echo "kubectl port-forward -n ${K8S_NAMESPACE} svc/smartphone-frontend 8080:80"
+                    echo "sudo kubectl port-forward -n ${K8S_NAMESPACE} svc/smartphone-backend 5000:5000"
+                    echo "sudo kubectl port-forward -n ${K8S_NAMESPACE} svc/smartphone-frontend 8080:80"
                 '''
             }
         }
