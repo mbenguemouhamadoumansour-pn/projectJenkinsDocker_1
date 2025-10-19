@@ -7,7 +7,7 @@ const smartphoneRoutes = require('./routes/smartphoneRoutes');
 const app = express();
 
 // Connexion MongoDB
-const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://smartphone-mongo.smartphone-app.svc.cluster.local:27017/samadb';
+const MONGODB_URI = 'mongodb://smartphone-mongo.smartphone-app.svc.cluster.local:27017/samadb';
 
 mongoose.connect(MONGODB_URI)
   .then(() => console.log('✅ MongoDB connecté'))
