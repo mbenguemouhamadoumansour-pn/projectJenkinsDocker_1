@@ -6,12 +6,12 @@ metadata:
   labels:
     app: smartphone-mongo
 spec:
-  type: NodePort
+  type: ClusterIP  # ✅ ClusterIP pour un accès interne uniquement
   ports:
   - port: 27017
     targetPort: 27017
     protocol: TCP
-    name: http
-    nodePort: 30080
+    name: mongodb
   selector:
     app: smartphone-mongo
+  clusterIP: None  # ✅ Headless service pour MongoDB
