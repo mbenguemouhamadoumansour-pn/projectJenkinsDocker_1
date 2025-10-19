@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: smartphone-mongo
+  namespace: smartphone-app
+  labels:
+    app: smartphone-mongo
+spec:
+  selector:
+    app: smartphone-mongo
+  ports:
+    - port: 27017
+      targetPort: 27017
+      protocol: TCP
