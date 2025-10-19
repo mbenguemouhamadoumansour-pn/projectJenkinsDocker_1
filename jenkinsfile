@@ -11,6 +11,10 @@ pipeline {
         
         K8S_NAMESPACE = 'smartphone-app'
         SONAR_PROJECT_KEY = 'Smartphone-Management-App'
+        
+        // Variables pour l'accès
+        BACKEND_PORT = '30500'
+        FRONTEND_PORT = '30080'
     }
     
     stages {
@@ -23,7 +27,7 @@ pipeline {
         
         stage('🔄 Checkout') {
             steps {
-                echo 'Récupération du code...'
+                echo 'Récupération du code depuis GitHub...'
                 git branch: 'main',
                     url: 'https://github.com/mbenguemouhamadoumansour-pn/projectJenkinsDocker_1.git'
             }
@@ -31,14 +35,14 @@ pipeline {
         
         stage('📦 Install Dependencies') {
             parallel {
-                stage('Backend') {
+                stage('Backend Dependencies') {
                     steps {
                         dir('backend') {
                             sh 'npm install'
                         }
                     }
                 }
-                stage('Frontend') {
+                stage('Frontend Dependencies') {
                     steps {
                         dir('frontend') {
                             sh 'npm install'
@@ -48,16 +52,16 @@ pipeline {
             }
         }
         
-        stage('🧪 Tests') {
+        stage('🧪 Run Tests') {
             parallel {
-                stage('Backend') {
+                stage('Backend Tests') {
                     steps {
                         dir('backend') {
                             sh 'npm test -- --coverage --watchAll=false || true'
                         }
                     }
                 }
-                stage('Frontend') {
+                stage('Frontend Tests') {
                     steps {
                         dir('frontend') {
                             sh 'CI=true npm test -- --coverage --watchAll=false || true'
@@ -67,9 +71,9 @@ pipeline {
             }
         }
         
-        stage('🔍 SonarQube') {
+        stage('🔍 SonarQube Analysis') {
             steps {
-                echo 'Analyse SonarQube...'
+                echo 'Analyse du code avec SonarQube...'
                 script {
                     def scannerHome = tool 'SonarScanner'
                     withSonarQubeEnv('SonarQube') {
@@ -90,18 +94,22 @@ pipeline {
                     script {
                         try {
                             def qg = waitForQualityGate()
-                            echo "Quality Gate: ${qg.status}"
+                            if (qg.status != 'OK') {
+                                echo "⚠️ Quality Gate: ${qg.status}"
+                            } else {
+                                echo "✅ Quality Gate: PASSED"
+                            }
                         } catch (Exception e) {
-                            echo "QG check - continuing anyway"
+                            echo "⚠️ Quality Gate vérification échouée - continuing anyway"
                         }
                     }
                 }
             }
         }
         
-        stage('🐳 Build Docker') {
+        stage('🐳 Build Docker Images') {
             parallel {
-                stage('Backend') {
+                stage('Build Backend') {
                     steps {
                         dir('backend') {
                             sh """
@@ -111,7 +119,7 @@ pipeline {
                         }
                     }
                 }
-                stage('Frontend') {
+                stage('Build Frontend') {
                     steps {
                         dir('frontend') {
                             sh """
@@ -124,84 +132,128 @@ pipeline {
             }
         }
         
-        stage('📤 Push DockerHub') {
+        stage('📤 Push to DockerHub') {
             steps {
-                sh """
-                    echo \$DOCKERHUB_CREDENTIALS_PSW | docker login -u \$DOCKERHUB_CREDENTIALS_USR --password-stdin
-                    docker push ${BACKEND_IMAGE}:${IMAGE_TAG}
-                    docker push ${BACKEND_IMAGE}:latest
-                    docker push ${FRONTEND_IMAGE}:${IMAGE_TAG}
-                    docker push ${FRONTEND_IMAGE}:latest
-                    docker logout
-                """
+                script {
+                    sh """
+                        echo \$DOCKERHUB_CREDENTIALS_PSW | docker login -u \$DOCKERHUB_CREDENTIALS_USR --password-stdin
+                        
+                        docker push ${BACKEND_IMAGE}:${IMAGE_TAG}
+                        docker push ${BACKEND_IMAGE}:latest
+                        
+                        docker push ${FRONTEND_IMAGE}:${IMAGE_TAG}
+                        docker push ${FRONTEND_IMAGE}:latest
+                        
+                        docker logout
+                    """
+                }
             }
         }
         
         stage('🚀 Deploy to Kubernetes') {
             steps {
-                sh '''
-                    sudo kubectl create namespace ${K8S_NAMESPACE} --dry-run=client -o yaml | sudo kubectl apply -f -
-                    
-                    sudo kubectl delete configmap backend-config -n ${K8S_NAMESPACE} --ignore-not-found || true
-                    sudo kubectl create configmap backend-config \
-                      --from-literal=MONGODB_URI=mongodb://smartphone-mongo:27017/samadb \
-                      --from-literal=PORT=5000 \
-                      --from-literal=NODE_ENV=production \
-                      -n ${K8S_NAMESPACE}
-                    
-                    sudo kubectl delete secret dockerhub-secret -n ${K8S_NAMESPACE} --ignore-not-found || true
-                    sudo kubectl create secret docker-registry dockerhub-secret \
-                      --docker-server=docker.io \
-                      --docker-username=${DOCKERHUB_USERNAME} \
-                      --docker-password=${DOCKERHUB_CREDENTIALS_PSW} \
-                      --docker-email=jenkins@example.com \
-                      -n ${K8S_NAMESPACE}
-                    
-                    sudo kubectl apply -f k8s/namespace.yaml
-                    sudo kubectl apply -f k8s/mongodb-pvc.yaml -n ${K8S_NAMESPACE}
-                    sudo kubectl apply -f k8s/mongodb-deployment.yaml -n ${K8S_NAMESPACE}
-                    sudo kubectl apply -f k8s/backend-deployment.yaml -n ${K8S_NAMESPACE}
-                    sudo kubectl apply -f k8s/backend-service.yaml -n ${K8S_NAMESPACE}
-                    sudo kubectl apply -f k8s/frontend-deployment.yaml -n ${K8S_NAMESPACE}
-                    sudo kubectl apply -f k8s/frontend-service.yaml -n ${K8S_NAMESPACE}
-                    
-                    echo "Attente du déploiement..."
-                    sleep 30
-                    sudo kubectl get pods -n ${K8S_NAMESPACE}
-                '''
+                script {
+                    sh """
+                        # Créer le namespace
+                        kubectl create namespace ${K8S_NAMESPACE} --dry-run=client -o yaml | kubectl apply -f -
+                        
+                        # Créer/Mettre à jour le ConfigMap
+                        kubectl delete configmap backend-config -n ${K8S_NAMESPACE} --ignore-not-found
+                        kubectl create configmap backend-config \
+                          --from-literal=MONGODB_URI=mongodb://smartphone-mongo:27017/samadb \
+                          --from-literal=PORT=5000 \
+                          --from-literal=NODE_ENV=production \
+                          -n ${K8S_NAMESPACE}
+                        
+                        # Créer/Mettre à jour le Secret DockerHub
+                        kubectl delete secret dockerhub-secret -n ${K8S_NAMESPACE} --ignore-not-found
+                        kubectl create secret docker-registry dockerhub-secret \
+                          --docker-server=docker.io \
+                          --docker-username=${DOCKERHUB_USERNAME} \
+                          --docker-password=\${DOCKERHUB_CREDENTIALS_PSW} \
+                          --docker-email=jenkins@example.com \
+                          -n ${K8S_NAMESPACE}
+                        
+                        # Déployer les ressources Kubernetes
+                        kubectl apply -f k8s/namespace.yaml
+                        kubectl apply -f k8s/mongodb-pvc.yaml -n ${K8S_NAMESPACE}
+                        kubectl apply -f k8s/mongodb-deployment.yaml -n ${K8S_NAMESPACE}
+                        kubectl apply -f k8s/backend-deployment.yaml -n ${K8S_NAMESPACE}
+                        kubectl apply -f k8s/backend-service.yaml -n ${K8S_NAMESPACE}
+                        kubectl apply -f k8s/frontend-deployment.yaml -n ${K8S_NAMESPACE}
+                        kubectl apply -f k8s/frontend-service.yaml -n ${K8S_NAMESPACE}
+                        
+                        # Attendre que les déploiements soient prêts
+                        echo "⏳ Attente du déploiement des pods..."
+                        kubectl rollout status deployment/smartphone-mongo -n ${K8S_NAMESPACE} --timeout=3m
+                        kubectl rollout status deployment/smartphone-backend -n ${K8S_NAMESPACE} --timeout=3m
+                        kubectl rollout status deployment/smartphone-frontend -n ${K8S_NAMESPACE} --timeout=3m
+                    """
+                }
             }
         }
         
         stage('✅ Verification') {
             steps {
-                sh '''
-                    echo "=== État des Pods ==="
-                    sudo kubectl get pods -n ${K8S_NAMESPACE}
-                    
-                    echo ""
-                    echo "=== État des Services ==="
-                    sudo kubectl get svc -n ${K8S_NAMESPACE}
-                    
-                    echo ""
-                    echo "✅ Déploiement réussi!"
-                    echo ""
-                    echo "Pour accéder à l'application:"
-                    echo "sudo kubectl port-forward -n ${K8S_NAMESPACE} svc/smartphone-backend 5000:5000"
-                    echo "sudo kubectl port-forward -n ${K8S_NAMESPACE} svc/smartphone-frontend 8080:80"
-                '''
+                script {
+                    sh """
+                        echo "======================================"
+                        echo "📊 ÉTAT DES DÉPLOIEMENTS"
+                        echo "======================================"
+                        
+                        echo ""
+                        echo "🔷 Pods:"
+                        kubectl get pods -n ${K8S_NAMESPACE} -o wide
+                        
+                        echo ""
+                        echo "🔷 Services:"
+                        kubectl get svc -n ${K8S_NAMESPACE}
+                        
+                        echo ""
+                        echo "🔷 Deployments:"
+                        kubectl get deployments -n ${K8S_NAMESPACE}
+                        
+                        echo ""
+                        echo "======================================"
+                        echo "✅ DÉPLOIEMENT RÉUSSI!"
+                        echo "======================================"
+                        echo ""
+                        echo "📱 Accéder à l'application:"
+                        echo "   Frontend: http://<VOTRE-IP>:${FRONTEND_PORT}"
+                        echo "   Backend:  http://<VOTRE-IP>:${BACKEND_PORT}"
+                        echo ""
+                        echo "💡 Commandes utiles:"
+                        echo "   Logs Backend:  kubectl logs -f deployment/smartphone-backend -n ${K8S_NAMESPACE}"
+                        echo "   Logs Frontend: kubectl logs -f deployment/smartphone-frontend -n ${K8S_NAMESPACE}"
+                        echo "   Logs MongoDB:  kubectl logs -f deployment/smartphone-mongo -n ${K8S_NAMESPACE}"
+                    """
+                }
             }
         }
     }
     
     post {
         always {
+            echo '🧹 Nettoyage des images Docker locales...'
             sh 'docker image prune -f || true'
         }
         success {
-            echo '✅ Pipeline terminé avec succès!'
+            echo '✅ ========================================='
+            echo '✅ PIPELINE TERMINÉ AVEC SUCCÈS!'
+            echo '✅ ========================================='
+            echo "✅ Build #${BUILD_NUMBER} déployé"
+            echo "✅ Images: ${BACKEND_IMAGE}:${IMAGE_TAG}"
+            echo "✅         ${FRONTEND_IMAGE}:${IMAGE_TAG}"
         }
         failure {
-            echo '❌ Pipeline échoué'
+            echo '❌ ========================================='
+            echo '❌ PIPELINE ÉCHOUÉ'
+            echo '❌ ========================================='
+            echo "❌ Build #${BUILD_NUMBER} a échoué"
+            echo "❌ Consultez les logs pour plus de détails"
+        }
+        unstable {
+            echo '⚠️ Pipeline instable - vérifiez les tests'
         }
     }
 }

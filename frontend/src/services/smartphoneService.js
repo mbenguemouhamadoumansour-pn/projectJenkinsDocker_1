@@ -2,9 +2,7 @@ import axios from 'axios';
 
 // ✅ Configuration de l'URL de l'API selon l'environnement
 const API_URL = process.env.REACT_APP_API_URL || 
-                (window.location.hostname === 'localhost' 
-                  ? 'http://35.89.146.241:5000/api/smartphones'
-                  : `http://${window.location.hostname}:5000/api/smartphones`);
+                `http://${window.location.hostname}:5000/api/smartphones`;
 
 console.log('🔗 API URL utilisée:', API_URL);
 

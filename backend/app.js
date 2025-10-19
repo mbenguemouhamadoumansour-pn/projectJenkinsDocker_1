@@ -6,12 +6,17 @@ const smartphoneRoutes = require('./routes/smartphoneRoutes');
 
 const app = express();
 
-// Connexion MongoDB
-const MONGODB_URI = 'mongodb://smartphone-mongo.smartphone-app.svc.cluster.local:27017/samadb';
+// ✅ Connexion MongoDB avec variable d'environnement
+const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://smartphone-mongo:27017/samadb';
+
+console.log('🔗 Tentative de connexion à MongoDB:', MONGODB_URI);
 
 mongoose.connect(MONGODB_URI)
-  .then(() => console.log('✅ MongoDB connecté'))
-  .catch(err => console.error('❌ Erreur MongoDB:', err));
+  .then(() => console.log('✅ MongoDB connecté avec succès'))
+  .catch(err => {
+    console.error('❌ Erreur de connexion MongoDB:', err);
+    process.exit(1);
+  });
 
 // Middlewares
 app.use(cors());
@@ -20,20 +25,25 @@ app.use(express.urlencoded({ extended: true }));
 
 // ✅ ENDPOINT HEALTH CHECK (pour Kubernetes)
 app.get('/api/health', (req, res) => {
-  res.status(200).json({
+  const healthcheck = {
     status: 'ok',
     message: 'Backend is healthy',
-    timestamp: new Date().toISOString()
-  });
+    timestamp: new Date().toISOString(),
+    uptime: process.uptime(),
+    mongodb: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected'
+  };
+  
+  res.status(200).json(healthcheck);
 });
 
-// Routes
+// Routes API
 app.use('/api/smartphones', smartphoneRoutes);
 
-// Route de test
+// Route racine
 app.get('/', (req, res) => {
   res.json({
     message: 'API Gestion Smartphones - Bienvenue !',
+    version: '1.0.0',
     endpoints: {
       'GET /api/health': 'Vérifier la santé du service',
       'GET /api/smartphones': 'Récupérer tous les smartphones',
@@ -49,12 +59,24 @@ app.get('/', (req, res) => {
 app.use((req, res) => {
   res.status(404).json({
     success: false,
-    message: 'Route non trouvée'
+    message: 'Route non trouvée',
+    path: req.path
+  });
+});
+
+// Gestion des erreurs globales
+app.use((err, req, res, next) => {
+  console.error('❌ Erreur:', err);
+  res.status(500).json({
+    success: false,
+    message: 'Erreur serveur interne',
+    error: process.env.NODE_ENV === 'development' ? err.message : undefined
   });
 });
 
 // Démarrage du serveur
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => {
+app.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 Serveur lancé sur le port ${PORT}`);
+  console.log(`🌍 Environnement: ${process.env.NODE_ENV || 'development'}`);
 });

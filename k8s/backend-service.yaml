@@ -6,11 +6,12 @@ metadata:
   labels:
     app: smartphone-backend
 spec:
-  type: ClusterIP
+  type: NodePort
   ports:
   - port: 5000
     targetPort: 5000
     protocol: TCP
     name: http
+    nodePort: 30500  # ✅ Port externe pour accéder au backend
   selector:
     app: smartphone-backend
