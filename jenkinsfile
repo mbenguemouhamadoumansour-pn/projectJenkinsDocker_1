@@ -187,6 +187,7 @@ pipeline {
                         # Déployer les ressources Kubernetes
                         kubectl apply -f k8s/namespace.yaml
                         kubectl apply -f k8s/mongodb-pvc.yaml -n ${K8S_NAMESPACE}
+                        kubectl apply -f k8s/mongodb-service.yaml -n ${K8S_NAMESPACE}
                         kubectl apply -f k8s/mongodb-deployment.yaml -n ${K8S_NAMESPACE}
                         kubectl apply -f k8s/backend-deployment.yaml -n ${K8S_NAMESPACE}
                         kubectl apply -f k8s/backend-service.yaml -n ${K8S_NAMESPACE}
