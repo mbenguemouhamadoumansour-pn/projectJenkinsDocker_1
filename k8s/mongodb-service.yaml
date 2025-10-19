@@ -6,9 +6,12 @@ metadata:
   labels:
     app: smartphone-mongo
 spec:
+  type: NodePort
+  ports:
+  - port: 27017
+    targetPort: 27017
+    protocol: TCP
+    name: http
+    nodePort: 30080
   selector:
     app: smartphone-mongo
-  ports:
-    - port: 27017
-      targetPort: 27017
-      protocol: TCP
