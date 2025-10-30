@@ -5,5 +5,3 @@ metadata:
   labels:
     name: smartphone-app
     managed-by: jenkins
-
----
