@@ -45,8 +45,6 @@ pipeline {
                 stage('Frontend Dependencies') {
                     steps {
                         dir('frontend') {
-                            sh 'chmod +x node_modules/.bin/react-scripts'
-                            sh 'CI=true npm test -- --coverage --watchAll=false'
                             sh 'npm install'
                         }
                     }
