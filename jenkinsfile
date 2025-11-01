@@ -64,7 +64,7 @@ pipeline {
                 stage('Frontend Tests') {
                     steps {
                         dir('frontend') {
-                            sh 'CI=true npm test -- --coverage --watchAll=false || true'
+                            sh 'CI=true npx react-scripts test --coverage --watchAll=false || true'
                         }
                     }
                 }
