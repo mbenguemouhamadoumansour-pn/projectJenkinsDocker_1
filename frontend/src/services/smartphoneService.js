@@ -1,12 +1,14 @@
 import axios from 'axios';
 
-// ✅ Configuration de l'URL de l'API selon l'environnement
-const API_BASE_URL = process.env.REACT_APP_API_URL || 
-                     `http://${window.location.hostname}:30500/api`;
+// ✅ Configuration de l'URL de l'API
+// En production avec Nginx, on utilise /api (reverse proxy)
+// En développement local, on utilise l'URL complète
+const API_BASE_URL = process.env.REACT_APP_API_URL || '/api';
 
 const API_URL = `${API_BASE_URL}/smartphones`;
 
 console.log('🔗 API URL utilisée:', API_URL);
+console.log('🌍 Environment:', process.env.NODE_ENV);
 
 // Récupérer tous les smartphones
 const getAllSmartphones = () => {
