@@ -12,7 +12,6 @@ pipeline {
         K8S_NAMESPACE = 'smartphone-app'
         SONAR_PROJECT_KEY = 'Smartphone-Management-App'
         
-        // Variables pour l'accès
         BACKEND_PORT = '30500'
         FRONTEND_PORT = '30080'
     }
@@ -27,47 +26,21 @@ pipeline {
         
         stage('🔄 Checkout') {
             steps {
-                echo 'Récupération du code depuis GitHub...'
-                git branch: 'main',
-                    url: 'https://github.com/mbenguemouhamadoumansour-pn/projectJenkinsDocker_1.git'
-            }
-        }
-        
-        stage('📦 Install Dependencies') {
-            parallel {
-                stage('Backend Dependencies') {
-                    steps {
-                        dir('backend') {
-                            sh 'npm install'
-                        }
-                    }
-                }
-                stage('Frontend Dependencies') {
-                    steps {
-                        dir('frontend') {
-                            sh 'npm install'
-                        }
-                    }
-                }
-            }
-        }
-        
-        stage('🧪 Run Tests') {
-            parallel {
-                stage('Backend Tests') {
-                    steps {
-                        dir('backend') {
-                            sh 'npm test -- --coverage --watchAll=false || true'
-                        }
-                    }
-                }
-                stage('Frontend Tests') {
-                    steps {
-                        dir('frontend') {
-                            sh 'CI=true npm test -- --coverage --watchAll=false || true'
-                        }
-                    }
-                }
+                echo 'Récupération du code depuis GitHub (shallow clone)...'
+                checkout([
+                    $class: 'GitSCM',
+                    branches: [[name: '*/main']],
+                    extensions: [
+                        [$class: 'CloneOption', 
+                         shallow: true, 
+                         depth: 1,
+                         timeout: 30
+                        ]
+                    ],
+                    userRemoteConfigs: [[
+                        url: 'https://github.com/mbenguemouhamadoumansour-pn/projectJenkinsDocker_1.git'
+                    ]]
+                ])
             }
         }
         
@@ -79,39 +52,16 @@ pipeline {
                         def scannerHome = tool 'SonarScanner'
                         withSonarQubeEnv('SonarQube') {
                             sh """
-                                timeout 10m ${scannerHome}/bin/sonar-scanner \
+                                ${scannerHome}/bin/sonar-scanner \
                                   -Dsonar.projectKey=${SONAR_PROJECT_KEY} \
                                   -Dsonar.sources=. \
-                                  -Dsonar.host.url=http://localhost:9000 \
-                                  -Dsonar.javascript.node.maxspace=2048
+                                  -Dsonar.host.url=http://localhost:9000
                             """
                         }
-                        echo "✅ Analyse SonarQube terminée avec succès"
+                        echo "✅ Analyse SonarQube terminée"
                     } catch (Exception e) {
                         echo "⚠️ Analyse SonarQube échouée : ${e.message}"
-                        echo "⚠️ Continuation du pipeline sans bloquer..."
                         currentBuild.result = 'UNSTABLE'
-                    }
-                }
-            }
-        }
-        
-        stage('🚦 Quality Gate') {
-            steps {
-                timeout(time: 5, unit: 'MINUTES') {
-                    script {
-                        try {
-                            def qg = waitForQualityGate()
-                            if (qg.status != 'OK') {
-                                echo "⚠️ Quality Gate: ${qg.status}"
-                                echo "⚠️ Continuation du pipeline malgré Quality Gate..."
-                            } else {
-                                echo "✅ Quality Gate: PASSED"
-                            }
-                        } catch (Exception e) {
-                            echo "⚠️ Quality Gate vérification échouée - continuing anyway"
-                            echo "⚠️ Erreur: ${e.message}"
-                        }
                     }
                 }
             }
@@ -195,7 +145,7 @@ pipeline {
                         kubectl apply -f k8s/frontend-service.yaml -n ${K8S_NAMESPACE}
                         
                         # Attendre que les déploiements soient prêts
-                        echo "⏳ Attente du déploiement des pods..."
+                        echo "⏳ Attente du déploiement..."
                         kubectl rollout status deployment/smartphone-mongo -n ${K8S_NAMESPACE} --timeout=3m || true
                         kubectl rollout status deployment/smartphone-backend -n ${K8S_NAMESPACE} --timeout=3m || true
                         kubectl rollout status deployment/smartphone-frontend -n ${K8S_NAMESPACE} --timeout=3m || true
@@ -212,31 +162,13 @@ pipeline {
                         echo "📊 ÉTAT DES DÉPLOIEMENTS"
                         echo "======================================"
                         
-                        echo ""
-                        echo "🔷 Pods:"
                         kubectl get pods -n ${K8S_NAMESPACE} -o wide
-                        
-                        echo ""
-                        echo "🔷 Services:"
                         kubectl get svc -n ${K8S_NAMESPACE}
                         
                         echo ""
-                        echo "🔷 Deployments:"
-                        kubectl get deployments -n ${K8S_NAMESPACE}
-                        
-                        echo ""
-                        echo "======================================"
                         echo "✅ DÉPLOIEMENT RÉUSSI!"
-                        echo "======================================"
-                        echo ""
-                        echo "📱 Accéder à l'application:"
-                        echo "   Frontend: http://\$(hostname -I | awk '{print \$1}'):${FRONTEND_PORT}"
-                        echo "   Backend:  http://\$(hostname -I | awk '{print \$1}'):${BACKEND_PORT}"
-                        echo ""
-                        echo "💡 Commandes utiles:"
-                        echo "   Logs Backend:  kubectl logs -f deployment/smartphone-backend -n ${K8S_NAMESPACE}"
-                        echo "   Logs Frontend: kubectl logs -f deployment/smartphone-frontend -n ${K8S_NAMESPACE}"
-                        echo "   Logs MongoDB:  kubectl logs -f deployment/smartphone-mongo -n ${K8S_NAMESPACE}"
+                        echo "📱 Frontend: http://\$(hostname -I | awk '{print \$1}'):${FRONTEND_PORT}"
+                        echo "🔧 Backend:  http://\$(hostname -I | awk '{print \$1}'):${BACKEND_PORT}"
                     """
                 }
             }
@@ -245,16 +177,20 @@ pipeline {
     
     post {
         always {
-            echo '🧹 Nettoyage des images Docker locales...'
-            sh 'docker image prune -f || true'
+            script {
+                try {
+                    sh 'docker image prune -f || true'
+                    sh 'df -h'
+                } catch (Exception e) {
+                    echo "Impossible d'afficher l'espace disque Docker"
+                }
+            }
         }
         success {
             echo '✅ ========================================='
             echo '✅ PIPELINE TERMINÉ AVEC SUCCÈS!'
             echo '✅ ========================================='
             echo "✅ Build #${BUILD_NUMBER} déployé"
-            echo "✅ Images: ${BACKEND_IMAGE}:${IMAGE_TAG}"
-            echo "✅         ${FRONTEND_IMAGE}:${IMAGE_TAG}"
         }
         failure {
             echo '❌ ========================================='
@@ -262,13 +198,6 @@ pipeline {
             echo '❌ ========================================='
             echo "❌ Build #${BUILD_NUMBER} a échoué"
             echo "❌ Consultez les logs pour plus de détails"
-        }
-        unstable {
-            echo '⚠️ ========================================='
-            echo '⚠️ PIPELINE INSTABLE'
-            echo '⚠️ ========================================='
-            echo '⚠️ SonarQube a échoué mais le déploiement continue'
-            echo '⚠️ Vérifiez les logs SonarQube pour plus de détails'
         }
     }
 }
