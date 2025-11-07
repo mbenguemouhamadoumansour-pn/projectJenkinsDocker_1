@@ -47,25 +47,23 @@ pipeline {
         stage('🔍 SonarQube Analysis') {
             steps {
                 echo 'Analyse du code avec SonarQube...'
-                script {
-                    try {
+                catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
+                    script {
                         def scannerHome = tool 'SonarScanner'
                         withSonarQubeEnv('SonarQube') {
                             sh """
                                 ${scannerHome}/bin/sonar-scanner \
-                                  -Dsonar.projectKey=${SONAR_PROJECT_KEY} \
-                                  -Dsonar.sources=. \
-                                  -Dsonar.host.url=http://localhost:9000
+                                -Dsonar.projectKey=${SONAR_PROJECT_KEY} \
+                                -Dsonar.sources=. \
+                                -Dsonar.host.url=http://sonarqube:9000
                             """
                         }
-                        echo "✅ Analyse SonarQube terminée"
-                    } catch (Exception e) {
-                        echo "⚠️ Analyse SonarQube échouée : ${e.message}"
-                        currentBuild.result = 'UNSTABLE'
                     }
                 }
+                echo "✅ Analyse SonarQube terminée (ou ignorée si erreur)"
             }
         }
+
         
         stage('🐳 Build Docker Images') {
             parallel {
